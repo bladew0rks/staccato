@@ -152,7 +152,22 @@ func (ms *MusicServer) handleStreamTrack(w http.ResponseWriter, r *http.Request)
 	var track *models.Track
 	var err error
 	if showUserTracks {
+		// First try to get track as owner
 		track, err = ms.db.GetTrackByIDForOwner(trackID, currentUser)
+
+		// If not found as owner, check if track is accessible via shared playlists
+		if err != nil {
+			// Check if track exists at all first
+			trackExists, checkErr := ms.db.GetTrackByID(trackID)
+			if checkErr == nil && trackExists != nil {
+				// Track exists, now check if it's accessible via shared playlists
+				canAccess, accessErr := ms.db.CheckTrackAccessViaSharedPlaylists(trackID, currentUser)
+				if accessErr == nil && canAccess {
+					track = trackExists
+					err = nil // Clear the error since we found the track via shared playlist
+				}
+			}
+		}
 	} else {
 		track, err = ms.db.GetMainLibraryTrackByID(trackID)
 	}

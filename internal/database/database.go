@@ -224,6 +224,57 @@ func (db *Database) runMigrations() error {
 		db.logger.Info("Added owner column and index to tracks table")
 	}
 
+	// Migration 3: Add owner and shared columns to playlists table if they don't exist
+	var playlistOwnerExists bool
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) > 0 
+		FROM pragma_table_info('playlists') 
+		WHERE name = 'owner'`).Scan(&playlistOwnerExists)
+
+	if err != nil {
+		return err
+	}
+
+	if !playlistOwnerExists {
+		_, err = db.conn.Exec("ALTER TABLE playlists ADD COLUMN owner TEXT")
+		if err != nil {
+			return err
+		}
+
+		// Create index for the new owner column
+		_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_playlists_owner ON playlists(owner)")
+		if err != nil {
+			return err
+		}
+
+		db.logger.Info("Added owner column and index to playlists table")
+	}
+
+	var playlistSharedExists bool
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) > 0 
+		FROM pragma_table_info('playlists') 
+		WHERE name = 'shared'`).Scan(&playlistSharedExists)
+
+	if err != nil {
+		return err
+	}
+
+	if !playlistSharedExists {
+		_, err = db.conn.Exec("ALTER TABLE playlists ADD COLUMN shared BOOLEAN DEFAULT FALSE")
+		if err != nil {
+			return err
+		}
+
+		// Create index for the new shared column
+		_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_playlists_shared ON playlists(shared)")
+		if err != nil {
+			return err
+		}
+
+		db.logger.Info("Added shared column and index to playlists table")
+	}
+
 	return nil
 }
 
@@ -603,10 +654,10 @@ func (db *Database) GetMainLibraryTrackByID(id int) (*models.Track, error) {
 }
 
 // CreatePlaylist inserts a new playlist and returns its ID.
-func (db *Database) CreatePlaylist(name, description string) (int, error) {
+func (db *Database) CreatePlaylist(name, description, owner string, shared bool) (int, error) {
 	result, err := db.conn.Exec(`
-		INSERT INTO playlists (name, description)
-		VALUES (?, ?)`, name, description)
+		INSERT INTO playlists (name, description, owner, shared)
+		VALUES (?, ?, ?, ?)`, name, description, owner, shared)
 
 	if err != nil {
 		return 0, err
@@ -620,10 +671,10 @@ func (db *Database) CreatePlaylist(name, description string) (int, error) {
 func (db *Database) GetAllPlaylists() ([]models.Playlist, error) {
 	rows, err := db.conn.Query(`
 		SELECT p.id, p.name, p.description, p.cover_path, p.created_at,
-			   COALESCE(COUNT(pt.track_id), 0) as track_count
+			   COALESCE(COUNT(pt.track_id), 0) as track_count, COALESCE(p.owner, '') as owner, COALESCE(p.shared, FALSE) as shared
 		FROM playlists p
 		LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
-		GROUP BY p.id, p.name, p.description, p.cover_path, p.created_at
+		GROUP BY p.id, p.name, p.description, p.cover_path, p.created_at, p.owner, p.shared
 		ORDER BY p.created_at DESC`)
 
 	if err != nil {
@@ -636,7 +687,75 @@ func (db *Database) GetAllPlaylists() ([]models.Playlist, error) {
 		var playlist models.Playlist
 		var coverPath sql.NullString
 		err := rows.Scan(&playlist.ID, &playlist.Name, &playlist.Description,
-			&coverPath, &playlist.CreatedAt, &playlist.TrackCount)
+			&coverPath, &playlist.CreatedAt, &playlist.TrackCount, &playlist.Owner, &playlist.Shared)
+		if err != nil {
+			return nil, err
+		}
+		if coverPath.Valid {
+			playlist.CoverPath = coverPath.String
+		}
+		playlists = append(playlists, playlist)
+	}
+
+	return playlists, nil
+}
+
+// GetPlaylistsForUser returns playlists accessible to a specific user (owned by them or shared).
+func (db *Database) GetPlaylistsForUser(owner string) ([]models.Playlist, error) {
+	rows, err := db.conn.Query(`
+		SELECT p.id, p.name, p.description, p.cover_path, p.created_at,
+			   COALESCE(COUNT(pt.track_id), 0) as track_count, COALESCE(p.owner, '') as owner, COALESCE(p.shared, FALSE) as shared
+		FROM playlists p
+		LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+		WHERE p.owner = ? OR p.shared = TRUE
+		GROUP BY p.id, p.name, p.description, p.cover_path, p.created_at, p.owner, p.shared
+		ORDER BY p.created_at DESC`, owner)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var playlists []models.Playlist
+	for rows.Next() {
+		var playlist models.Playlist
+		var coverPath sql.NullString
+		err := rows.Scan(&playlist.ID, &playlist.Name, &playlist.Description,
+			&coverPath, &playlist.CreatedAt, &playlist.TrackCount, &playlist.Owner, &playlist.Shared)
+		if err != nil {
+			return nil, err
+		}
+		if coverPath.Valid {
+			playlist.CoverPath = coverPath.String
+		}
+		playlists = append(playlists, playlist)
+	}
+
+	return playlists, nil
+}
+
+// GetMainLibraryPlaylists returns only playlists from the main library (with empty/null owner) or shared playlists.
+func (db *Database) GetMainLibraryPlaylists() ([]models.Playlist, error) {
+	rows, err := db.conn.Query(`
+		SELECT p.id, p.name, p.description, p.cover_path, p.created_at,
+			   COALESCE(COUNT(pt.track_id), 0) as track_count, COALESCE(p.owner, '') as owner, COALESCE(p.shared, FALSE) as shared
+		FROM playlists p
+		LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+		WHERE (p.owner IS NULL OR p.owner = '') OR p.shared = TRUE
+		GROUP BY p.id, p.name, p.description, p.cover_path, p.created_at, p.owner, p.shared
+		ORDER BY p.created_at DESC`)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var playlists []models.Playlist
+	for rows.Next() {
+		var playlist models.Playlist
+		var coverPath sql.NullString
+		err := rows.Scan(&playlist.ID, &playlist.Name, &playlist.Description,
+			&coverPath, &playlist.CreatedAt, &playlist.TrackCount, &playlist.Owner, &playlist.Shared)
 		if err != nil {
 			return nil, err
 		}
@@ -726,6 +845,90 @@ func (db *Database) UpdatePlaylist(playlistID int, name, description, coverPath 
 		WHERE id = ?`,
 		name, description, coverPath, playlistID)
 	return err
+}
+
+// UpdatePlaylistSharing updates the shared status of a playlist.
+func (db *Database) UpdatePlaylistSharing(playlistID int, shared bool) error {
+	_, err := db.conn.Exec(`
+		UPDATE playlists 
+		SET shared = ?
+		WHERE id = ?`,
+		shared, playlistID)
+	return err
+}
+
+// GetPlaylistByID returns a playlist by its ID with ownership information.
+func (db *Database) GetPlaylistByID(playlistID int) (*models.Playlist, error) {
+	var playlist models.Playlist
+	var coverPath sql.NullString
+
+	err := db.conn.QueryRow(`
+		SELECT p.id, p.name, p.description, p.cover_path, p.created_at,
+			   COALESCE(COUNT(pt.track_id), 0) as track_count, COALESCE(p.owner, '') as owner, COALESCE(p.shared, FALSE) as shared
+		FROM playlists p
+		LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+		WHERE p.id = ?
+		GROUP BY p.id, p.name, p.description, p.cover_path, p.created_at, p.owner, p.shared`, playlistID).Scan(
+		&playlist.ID, &playlist.Name, &playlist.Description,
+		&coverPath, &playlist.CreatedAt, &playlist.TrackCount, &playlist.Owner, &playlist.Shared)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("playlist with ID %d not found", playlistID)
+		}
+		return nil, err
+	}
+
+	if coverPath.Valid {
+		playlist.CoverPath = coverPath.String
+	}
+
+	return &playlist, nil
+}
+
+// CheckPlaylistOwnership returns true if the user owns the playlist.
+func (db *Database) CheckPlaylistOwnership(playlistID int, owner string) (bool, error) {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM playlists WHERE id = ? AND owner = ?`,
+		playlistID, owner).Scan(&count)
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// CheckPlaylistAccess returns true if the user can access the playlist (owns it or it's shared).
+func (db *Database) CheckPlaylistAccess(playlistID int, owner string) (bool, error) {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM playlists WHERE id = ? AND (owner = ? OR shared = TRUE OR owner IS NULL OR owner = '')`,
+		playlistID, owner).Scan(&count)
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// CheckTrackAccessViaSharedPlaylists returns true if the track is accessible to the user via shared playlists.
+func (db *Database) CheckTrackAccessViaSharedPlaylists(trackID int, username string) (bool, error) {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(DISTINCT p.id) 
+		FROM playlists p
+		JOIN playlist_tracks pt ON p.id = pt.playlist_id
+		WHERE pt.track_id = ? AND (p.shared = TRUE OR p.owner = ? OR p.owner IS NULL OR p.owner = '')`,
+		trackID, username).Scan(&count)
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 // SearchTracks performs a simple LIKE-based search over title, artist and album.

@@ -14,6 +14,8 @@ let isShuffled = false;
 let repeatMode = 0; // 0 = off, 1 = playlist, 2 = track
 let isMuted = false;
 let lastVolume = 1;
+// Vinyl mode: 33⅓ RPM simulation (slow speed and pitch)
+let rpm33Mode = false;
 
 // Mobile sidebar toggle
 function toggleSidebar() {

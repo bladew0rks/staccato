@@ -25,6 +25,9 @@ type Playlist struct {
 	CoverPath   string    `json:"coverPath,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	TrackCount  int       `json:"trackCount"`
+	Owner       string    `json:"-"`       // don't expose owner to client, used for filtering
+	Shared      bool      `json:"shared"`  // whether playlist is shared with all users
+	IsOwner     bool      `json:"isOwner"` // whether current user owns this playlist (computed field)
 }
 
 // PlaylistTrack represents the relationship between playlists and tracks.

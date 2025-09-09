@@ -319,6 +319,11 @@ func (ms *MusicServer) setupRoutes() http.Handler {
 			case "DELETE":
 				ms.handleRemoveTrackFromPlaylist(w, r)
 			}
+		} else if len(pathParts) >= 5 && pathParts[4] == "share" {
+			switch r.Method {
+			case "POST":
+				ms.handleUpdatePlaylistSharing(w, r)
+			}
 		} else {
 			switch r.Method {
 			case "DELETE":

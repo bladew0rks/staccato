@@ -10,16 +10,50 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"staccato/pkg/models"
 )
 
 // handleGetPlaylists returns all playlists (with track counts) as JSON.
 func (ms *MusicServer) handleGetPlaylists(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	playlists, err := ms.db.GetAllPlaylists()
+	// Check if auth and user folders are both enabled and get current user
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+	}
+
+	// Determine which playlists to show:
+	// - If auth is enabled AND user folders are enabled AND we have a current user: show user's playlists + shared
+	// - Otherwise: show only main library playlists (excludes user playlists) + shared
+	showUserPlaylists := authService.IsEnabled() && userFolderManager.IsEnabled() && currentUser != ""
+
+	var playlists []models.Playlist
+	var err error
+	if showUserPlaylists {
+		playlists, err = ms.db.GetPlaylistsForUser(currentUser)
+	} else {
+		playlists, err = ms.db.GetMainLibraryPlaylists()
+	}
+
 	if err != nil {
 		http.Error(w, "Error retrieving playlists", http.StatusInternalServerError)
 		return
+	}
+
+	// Set IsOwner field for each playlist
+	for i := range playlists {
+		if showUserPlaylists && currentUser != "" {
+			playlists[i].IsOwner = playlists[i].Owner == currentUser
+		} else {
+			// When auth is disabled or no user, consider all playlists as "owned" for editing
+			playlists[i].IsOwner = true
+		}
 	}
 
 	json.NewEncoder(w).Encode(playlists)
@@ -49,7 +83,18 @@ func (ms *MusicServer) handleCreatePlaylist(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	id, err := ms.db.CreatePlaylist(req.Name, req.Description)
+	// Get current user for ownership
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+	}
+
+	// Default to not shared
+	id, err := ms.db.CreatePlaylist(req.Name, req.Description, currentUser, false)
 	if err != nil {
 		http.Error(w, "Error creating playlist", http.StatusInternalServerError)
 		return
@@ -73,6 +118,31 @@ func (ms *MusicServer) handleGetPlaylistTracks(w http.ResponseWriter, r *http.Re
 	playlistID, err := strconv.Atoi(pathParts[3])
 	if err != nil {
 		http.Error(w, "Invalid playlist ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check playlist access
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+	}
+
+	// Check if user can access this playlist
+	canAccess := true
+	if authService.IsEnabled() && userFolderManager.IsEnabled() && currentUser != "" {
+		canAccess, err = ms.db.CheckPlaylistAccess(playlistID, currentUser)
+		if err != nil {
+			http.Error(w, "Error checking playlist access", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if !canAccess {
+		http.Error(w, "Access denied", http.StatusForbidden)
 		return
 	}
 
@@ -115,6 +185,28 @@ func (ms *MusicServer) handleAddTrackToPlaylist(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Check playlist access for adding tracks
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+
+		// Only allow adding tracks if user owns the playlist (for now, can extend to shared playlists later)
+		isOwner, err := ms.db.CheckPlaylistOwnership(playlistID, currentUser)
+		if err != nil {
+			http.Error(w, "Error checking playlist ownership", http.StatusInternalServerError)
+			return
+		}
+
+		if !isOwner {
+			http.Error(w, "Access denied - you can only add tracks to your own playlists", http.StatusForbidden)
+			return
+		}
+	}
+
 	err = ms.db.AddTrackToPlaylist(playlistID, req.TrackID)
 	if err != nil {
 		http.Error(w, "Error adding track to playlist", http.StatusInternalServerError)
@@ -150,6 +242,28 @@ func (ms *MusicServer) handleRemoveTrackFromPlaylist(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Check playlist access for removing tracks
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+
+		// Only allow removing tracks if user owns the playlist
+		isOwner, err := ms.db.CheckPlaylistOwnership(playlistID, currentUser)
+		if err != nil {
+			http.Error(w, "Error checking playlist ownership", http.StatusInternalServerError)
+			return
+		}
+
+		if !isOwner {
+			http.Error(w, "Access denied - you can only remove tracks from your own playlists", http.StatusForbidden)
+			return
+		}
+	}
+
 	err = ms.db.RemoveTrackFromPlaylist(playlistID, trackID)
 	if err != nil {
 		http.Error(w, "Error removing track from playlist", http.StatusInternalServerError)
@@ -177,6 +291,28 @@ func (ms *MusicServer) handleDeletePlaylist(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "Invalid playlist ID", http.StatusBadRequest)
 		return
+	}
+
+	// Check playlist ownership for delete operations
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+
+		// Only allow deletion if user owns the playlist
+		isOwner, err := ms.db.CheckPlaylistOwnership(playlistID, currentUser)
+		if err != nil {
+			http.Error(w, "Error checking playlist ownership", http.StatusInternalServerError)
+			return
+		}
+
+		if !isOwner {
+			http.Error(w, "Access denied - you can only delete your own playlists", http.StatusForbidden)
+			return
+		}
 	}
 
 	err = ms.db.DeletePlaylist(playlistID)
@@ -273,4 +409,68 @@ func (ms *MusicServer) handleUpdatePlaylist(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 	// CORS headers now applied globally via middleware.
 	json.NewEncoder(w).Encode(map[string]string{"message": "Playlist updated successfully"})
+}
+
+// handleUpdatePlaylistSharing updates the sharing status of a playlist (POST).
+func (ms *MusicServer) handleUpdatePlaylistSharing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pathParts := strings.Split(r.URL.Path, "/")
+	if len(pathParts) < 4 {
+		http.Error(w, "Invalid playlist ID", http.StatusBadRequest)
+		return
+	}
+
+	playlistID, err := strconv.Atoi(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid playlist ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Shared bool `json:"shared"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Check playlist ownership for sharing operations
+	authService := ms.authService
+	userFolderManager := authService.GetUserFolderManager()
+	var currentUser string
+	if authService.IsEnabled() && userFolderManager.IsEnabled() {
+		if user := r.Context().Value(UserContextKey); user != nil {
+			currentUser = user.(string)
+		}
+
+		// Only allow sharing changes if user owns the playlist
+		isOwner, err := ms.db.CheckPlaylistOwnership(playlistID, currentUser)
+		if err != nil {
+			http.Error(w, "Error checking playlist ownership", http.StatusInternalServerError)
+			return
+		}
+
+		if !isOwner {
+			http.Error(w, "Access denied - you can only change sharing for your own playlists", http.StatusForbidden)
+			return
+		}
+	}
+
+	err = ms.db.UpdatePlaylistSharing(playlistID, req.Shared)
+	if err != nil {
+		http.Error(w, "Error updating playlist sharing", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	action := "private"
+	if req.Shared {
+		action = "shared"
+	}
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Playlist is now %s", action)})
 }

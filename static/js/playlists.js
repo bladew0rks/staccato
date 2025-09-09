@@ -60,12 +60,15 @@ function showAddToPlaylistModal(trackId) {
     
     if (!modal || !optionsContainer) return;
     
-    if (playlists.length === 0) {
+    // Filter to only show playlists the user owns
+    const ownedPlaylists = playlists.filter(playlist => playlist.isOwner);
+    
+    if (ownedPlaylists.length === 0) {
         optionsContainer.innerHTML = '<div class="loading">No playlists available. Create a playlist first.</div>';
     } else {
         optionsContainer.innerHTML = `
             <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 15px;">
-                ${playlists.map(playlist => `
+                ${ownedPlaylists.map(playlist => `
                     <div class="playlist-item" onclick="addTrackToPlaylist(${trackId}, ${playlist.id})" style="padding: 12px;">
                         <div class="playlist-cover" style="width: 80px; height: 80px; margin-bottom: 8px;">
                             ${playlist.coverPath ? 
@@ -147,7 +150,7 @@ async function showPlaylist(playlistId) {
                         </div>
                         <div class="track-actions">
                             <button class="play-btn" onclick="event.stopPropagation(); playTrack(${track.id})">PLAY</button>
-                            <button class="btn btn-danger" onclick="event.stopPropagation(); removeTrackFromPlaylist(${track.id}, ${playlistId})">REMOVE</button>
+                            ${playlist && playlist.isOwner ? `<button class="btn btn-danger" onclick="event.stopPropagation(); removeTrackFromPlaylist(${track.id}, ${playlistId})">REMOVE</button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -189,10 +192,7 @@ async function removeTrackFromPlaylist(trackId, playlistId) {
 
 // Delete playlist
 async function deletePlaylist(playlistId) {
-    const playlist = playlists.find(p => p.id === playlistId);
-    const playlistName = playlist ? playlist.name : 'this playlist';
-    
-    if (!confirm(`Delete "${playlistName}"? This cannot be undone.`)) {
+    if (!confirm('Are you sure you want to delete this playlist?')) {
         return;
     }
     
@@ -203,11 +203,10 @@ async function deletePlaylist(playlistId) {
         
         if (response.ok) {
             await loadPlaylists(); // Reload playlists
-            showNotification('Playlist deleted!');
-            
-            // If we're currently viewing this playlist, go back to playlists view
-            if (currentPlaylistId === playlistId) {
-                showSection('playlists');
+            showNotification('Playlist deleted successfully!');
+            // If we're currently viewing the deleted playlist, go back to library
+            if (currentSection === 'playlist-detail') {
+                showSection('library');
             }
         } else {
             const error = await response.text();
@@ -216,6 +215,36 @@ async function deletePlaylist(playlistId) {
     } catch (error) {
         console.error('Error deleting playlist:', error);
         alert('Error deleting playlist');
+    }
+}
+
+// Toggle playlist sharing
+async function togglePlaylistSharing(playlistId, currentSharedStatus) {
+    const newSharedStatus = !currentSharedStatus;
+    const action = newSharedStatus ? 'share' : 'make private';
+    
+    if (!confirm(`Are you sure you want to ${action} this playlist?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/playlists/${playlistId}/share`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shared: newSharedStatus })
+        });
+        
+        if (response.ok) {
+            await loadPlaylists(); // Reload playlists to refresh sharing status
+            const statusText = newSharedStatus ? 'shared with all users' : 'private';
+            showNotification(`Playlist is now ${statusText}!`);
+        } else {
+            const error = await response.text();
+            alert(`Failed to ${action} playlist: ` + error);
+        }
+    } catch (error) {
+        console.error(`Error ${action}ing playlist:`, error);
+        alert(`Error ${action}ing playlist`);
     }
 }
 

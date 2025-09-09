@@ -171,7 +171,8 @@ class MediaSessionManager {
         this.positionUpdateInterval = setInterval(() => {
             const audioPlayer = document.getElementById('audioPlayer');
             if (audioPlayer && !audioPlayer.paused && audioPlayer.duration > 0) {
-                this.updatePositionState(audioPlayer.duration, audioPlayer.currentTime);
+                const rate = typeof rpm33Mode !== 'undefined' && rpm33Mode ? 0.7407407407 : 1.0;
+                this.updatePositionState(audioPlayer.duration, audioPlayer.currentTime, rate);
             }
         }, 1000); // Update every second
     }
@@ -280,7 +281,8 @@ class MediaSessionManager {
         
         const audioPlayer = document.getElementById('audioPlayer');
         if (audioPlayer) {
-            this.updatePositionState(audioPlayer.duration || 0, audioPlayer.currentTime || 0);
+            const rate = typeof rpm33Mode !== 'undefined' && rpm33Mode ? 0.7407407407 : 1.0;
+            this.updatePositionState(audioPlayer.duration || 0, audioPlayer.currentTime || 0, rate);
         }
     }
 
@@ -305,7 +307,8 @@ class MediaSessionManager {
     // Called periodically to update position
     onTimeUpdate(currentTime, duration) {
         if (this.isSupported && duration > 0) {
-            this.updatePositionState(duration, currentTime);
+            const rate = typeof rpm33Mode !== 'undefined' && rpm33Mode ? 0.7407407407 : 1.0;
+            this.updatePositionState(duration, currentTime, rate);
         }
     }
 

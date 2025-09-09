@@ -125,17 +125,22 @@ function displayPlaylists() {
                      <i class="nf nf-md-playlist_music default-icon" style="display: none;"></i>` : 
                     '<i class="nf nf-md-playlist_music default-icon"></i>'
                 }
-                <button class="playlist-edit-btn" onclick="event.stopPropagation(); showEditPlaylistModal(${playlist.id})" title="Edit Playlist">
+                ${playlist.isOwner ? `<button class="playlist-edit-btn" onclick="event.stopPropagation(); showEditPlaylistModal(${playlist.id})" title="Edit Playlist">
                     <i class="nf nf-md-pencil"></i>
-                </button>
+                </button>` : ''}
             </div>
             <div class="playlist-meta">
-                <div class="playlist-name">${escapeHtml(playlist.name)}</div>
+                <div class="playlist-name">${escapeHtml(playlist.name)} ${playlist.shared ? '<i class="nf nf-md-share" title="Shared with all users"></i>' : '<i class="nf nf-md-lock" title="Private playlist"></i>'}</div>
                 <div class="playlist-info">${playlist.trackCount || 0} tracks</div>
             </div>
             <div class="playlist-actions">
                 <button class="btn btn-secondary" onclick="event.stopPropagation(); showPlaylist(${playlist.id})">VIEW</button>
-                <button class="btn btn-danger" onclick="event.stopPropagation(); deletePlaylist(${playlist.id})">DELETE</button>
+                ${playlist.isOwner ? `
+                    <button class="btn ${playlist.shared ? 'btn-warning' : 'btn-success'}" onclick="event.stopPropagation(); togglePlaylistSharing(${playlist.id}, ${playlist.shared})" title="${playlist.shared ? 'Make private' : 'Share with all users'}">
+                        <i class="nf nf-md-${playlist.shared ? 'lock' : 'share'}"></i> ${playlist.shared ? 'PRIVATE' : 'SHARE'}
+                    </button>
+                    <button class="btn btn-danger" onclick="event.stopPropagation(); deletePlaylist(${playlist.id})">DELETE</button>
+                ` : ''}
             </div>
         </div>
     `).join('');
@@ -262,6 +267,10 @@ async function playTrack(trackId) {
             // Wait for the audio to load and then play
             audioPlayer.addEventListener('loadeddata', function onLoaded() {
                 audioPlayer.removeEventListener('loadeddata', onLoaded);
+                // Apply selected RPM behavior before playing
+                if (typeof applyPlaybackRate === 'function') {
+                    applyPlaybackRate();
+                }
                 audioPlayer.play().then(() => {
                     console.log('Audio started playing');
 

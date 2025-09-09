@@ -286,6 +286,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (audioPlayer) {
         audioPlayer.addEventListener('timeupdate', updateProgress);
         audioPlayer.addEventListener('loadedmetadata', updateProgress);
+        // Ensure playback rate/pitch is applied on metadata load
+        audioPlayer.addEventListener('loadedmetadata', function() {
+            applyPlaybackRate();
+        });
         
         // Handle track ending
         audioPlayer.addEventListener('ended', function() {
@@ -321,6 +325,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     mediaSessionManager.onTrackStart(track);
                 }
             }
+            // Re-apply desired playback rate and pitch behavior
+            applyPlaybackRate();
         });
         
         // Handle when audio is paused
@@ -331,3 +337,48 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// Toggle 33⅓ RPM mode (simulate 33 rpm vs typical 45 rpm playback speed)
+function toggleRpm33() {
+    rpm33Mode = !rpm33Mode;
+    const btn = document.getElementById('rpmBtn');
+    if (btn) {
+        btn.classList.toggle('active', rpm33Mode);
+        btn.title = rpm33Mode ? '33⅓ RPM On' : '33⅓ RPM Off';
+    }
+    applyPlaybackRate();
+}
+
+// Apply playbackRate and pitch behavior to simulate turntable speed
+function applyPlaybackRate() {
+    const audioPlayer = document.getElementById('audioPlayer');
+    if (!audioPlayer) return;
+
+    // 33⅓ vs 45 RPM ratio ≈ 0.7407407407; when off, use normal 1.0
+    const rate = rpm33Mode ? 0.7407407407 : 1.0;
+    try {
+        audioPlayer.playbackRate = rate;
+    } catch (_) { /* noop */ }
+
+    try {
+        // We want pitch to drop when slowed: disable pitch preservation in this mode
+        if ('preservesPitch' in audioPlayer) audioPlayer.preservesPitch = !rpm33Mode;
+        if ('webkitPreservesPitch' in audioPlayer) audioPlayer.webkitPreservesPitch = !rpm33Mode;
+        if ('mozPreservesPitch' in audioPlayer) audioPlayer.mozPreservesPitch = !rpm33Mode;
+    } catch (_) { /* noop */ }
+
+    // Update media session with current rate
+    if (window.mediaSessionManager && audioPlayer.duration) {
+        mediaSessionManager.updatePositionState(audioPlayer.duration, audioPlayer.currentTime, rate);
+    }
+
+    // Reflect button state on first run
+    const btn = document.getElementById('rpmBtn');
+    if (btn) btn.classList.toggle('active', rpm33Mode);
+}
+
+// Expose for inline HTML handlers
+if (typeof window !== 'undefined') {
+    window.toggleRpm33 = toggleRpm33;
+    window.applyPlaybackRate = applyPlaybackRate;
+}
