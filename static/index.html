@@ -189,8 +189,10 @@
             </div>
             
             <div class="progress-container">
-                <div class="progress-bar" id="progressBar" onclick="seekToPosition(event)">
+                <div class="progress-bar" id="progressBar" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Seek">
+                    <div class="progress-buffer" id="progressBuffer"></div>
                     <div class="progress-fill" id="progressFill"></div>
+                    <div class="progress-handle" id="progressHandle" aria-hidden="true"></div>
                 </div>
                 <div class="time-display">
                     <span id="currentTime">0:00</span>
@@ -202,8 +204,9 @@
                 <button class="control-btn" id="volumeBtn" onclick="toggleMute()" title="Volume">
                     <i class="nf nf-md-volume_high"></i>
                 </button>
-                <div class="volume-slider" id="volumeSlider" onclick="setVolume(event)">
+                <div class="volume-slider" id="volumeSlider" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
                     <div class="volume-fill" id="volumeFill"></div>
+                    <div class="volume-handle" id="volumeHandle" aria-hidden="true"></div>
                 </div>
                 <button class="control-btn" id="rpmBtn" onclick="toggleRpm33()" title="33⅓ RPM">
                     33⅓

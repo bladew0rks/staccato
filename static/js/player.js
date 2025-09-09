@@ -1,5 +1,12 @@
 // Audio player functions
 
+// Enhanced seeker & volume interaction state
+let isSeeking = false;
+let seekWasPlaying = false;
+let isAdjustingVolume = false;
+
+function clamp(val, min, max) { return Math.min(max, Math.max(min, val)); }
+
 // Setup keyboard shortcuts
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', function(event) {
@@ -192,14 +199,35 @@ function formatTime(seconds) {
 function updateProgress() {
     const audioPlayer = document.getElementById('audioPlayer');
     const progressFill = document.getElementById('progressFill');
+    const progressHandle = document.getElementById('progressHandle');
+    const progressBuffer = document.getElementById('progressBuffer');
     const currentTimeSpan = document.getElementById('currentTime');
     const totalTimeSpan = document.getElementById('totalTime');
     
     if (audioPlayer.duration) {
-        const percentage = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-        progressFill.style.width = percentage + '%';
+        if (!isSeeking) { // freeze visual fill while actively dragging
+            const percentage = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+            progressFill.style.width = percentage + '%';
+            if (progressHandle) {
+                progressHandle.style.left = percentage + '%';
+            }
+        }
         currentTimeSpan.textContent = formatTime(audioPlayer.currentTime);
         totalTimeSpan.textContent = formatTime(audioPlayer.duration);
+        // buffered ranges (show the furthest buffered point that covers currentTime)
+        if (progressBuffer && audioPlayer.buffered && audioPlayer.buffered.length) {
+            let bufferedEnd = 0;
+            for (let i = 0; i < audioPlayer.buffered.length; i++) {
+                const start = audioPlayer.buffered.start(i);
+                const end = audioPlayer.buffered.end(i);
+                if (audioPlayer.currentTime >= start && audioPlayer.currentTime <= end) {
+                    bufferedEnd = end; break;
+                }
+                if (end > bufferedEnd) bufferedEnd = end; // fallback: max end
+            }
+            const bufPct = clamp((bufferedEnd / audioPlayer.duration) * 100, 0, 100);
+            progressBuffer.style.width = bufPct + '%';
+        }
         
         // Update media session position
         if (window.mediaSessionManager) {
@@ -222,6 +250,144 @@ function seekToPosition(event) {
         audioPlayer.currentTime = newTime;
         updateProgress();
     }
+}
+
+// Pointer-based scrubbing (drag seek)
+function initSeekerDrag() {
+    const progressBar = document.getElementById('progressBar');
+    if (!progressBar) return;
+    const audioPlayer = document.getElementById('audioPlayer');
+    const progressFill = document.getElementById('progressFill');
+    const progressHandle = document.getElementById('progressHandle');
+
+    const updateFromClientX = (clientX) => {
+        if (!audioPlayer.duration) return;
+        const rect = progressBar.getBoundingClientRect();
+        const pct = clamp((clientX - rect.left) / rect.width, 0, 1);
+        const pct100 = pct * 100;
+        progressFill.style.width = pct100 + '%';
+        if (progressHandle) progressHandle.style.left = pct100 + '%';
+        const previewTime = audioPlayer.duration * pct;
+        // live time preview
+        const currentTimeSpan = document.getElementById('currentTime');
+        if (currentTimeSpan) currentTimeSpan.textContent = formatTime(previewTime);
+        progressBar.setAttribute('aria-valuenow', Math.round(pct * 100));
+        progressBar.setAttribute('data-preview-time', previewTime);
+    };
+
+    const onPointerDown = (e) => {
+        if (!audioPlayer.duration) return;
+        isSeeking = true;
+        progressBar.classList.add('dragging');
+        seekWasPlaying = !audioPlayer.paused;
+        if (seekWasPlaying) audioPlayer.pause();
+        progressBar.setPointerCapture(e.pointerId);
+        updateFromClientX(e.clientX);
+        e.preventDefault();
+    };
+    const onPointerMove = (e) => {
+        if (!isSeeking) return;
+        updateFromClientX(e.clientX);
+    };
+    const onPointerUp = (e) => {
+        if (!isSeeking) return;
+        const previewTime = parseFloat(progressBar.getAttribute('data-preview-time') || '0');
+        if (!isNaN(previewTime)) {
+            audioPlayer.currentTime = previewTime;
+        }
+        isSeeking = false;
+        progressBar.classList.remove('dragging');
+        progressBar.releasePointerCapture(e.pointerId);
+        if (seekWasPlaying) audioPlayer.play();
+        updateProgress();
+    };
+
+    progressBar.addEventListener('pointerdown', onPointerDown);
+    progressBar.addEventListener('pointermove', onPointerMove);
+    progressBar.addEventListener('pointerup', onPointerUp);
+    progressBar.addEventListener('pointerleave', (e) => { if (isSeeking) onPointerUp(e); });
+
+    // Keyboard accessibility (when focused)
+    progressBar.addEventListener('keydown', (e) => {
+        if (!audioPlayer.duration) return;
+        let delta = 0;
+        if (e.key === 'ArrowLeft') delta = -5;
+        else if (e.key === 'ArrowRight') delta = 5;
+        else if (e.key === 'Home') { audioPlayer.currentTime = 0; updateProgress(); e.preventDefault(); return; }
+        else if (e.key === 'End') { audioPlayer.currentTime = audioPlayer.duration; updateProgress(); e.preventDefault(); return; }
+        else if (e.key === 'PageUp') delta = 15;
+        else if (e.key === 'PageDown') delta = -15;
+        if (delta !== 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            audioPlayer.currentTime = clamp(audioPlayer.currentTime + delta, 0, audioPlayer.duration);
+            updateProgress();
+        }
+    });
+}
+
+// Volume dragging
+function initVolumeDrag() {
+    const volumeSlider = document.getElementById('volumeSlider');
+    if (!volumeSlider) return;
+    const audioPlayer = document.getElementById('audioPlayer');
+    const volumeFill = document.getElementById('volumeFill');
+    const volumeHandle = document.getElementById('volumeHandle');
+    const volumeBtn = document.getElementById('volumeBtn');
+
+    const applyVolumeFromX = (clientX) => {
+        const rect = volumeSlider.getBoundingClientRect();
+        const pct = clamp((clientX - rect.left) / rect.width, 0, 1);
+        audioPlayer.volume = pct;
+        volumeFill.style.width = (pct * 100) + '%';
+        if (volumeHandle) volumeHandle.style.left = (pct * 100) + '%';
+        if (pct === 0) {
+            volumeBtn.querySelector('i').className = 'nf nf-md-volume_off';
+            isMuted = true;
+        } else {
+            isMuted = false;
+            volumeBtn.querySelector('i').className = pct > 0.5 ? 'nf nf-md-volume_high' : 'nf nf-md-volume_medium';
+            lastVolume = pct;
+        }
+        volumeSlider.setAttribute('aria-valuenow', Math.round(pct * 100));
+    };
+
+    const onPointerDown = (e) => {
+        isAdjustingVolume = true;
+        volumeSlider.classList.add('dragging');
+        volumeSlider.setPointerCapture(e.pointerId);
+        applyVolumeFromX(e.clientX);
+        e.preventDefault();
+    };
+    const onPointerMove = (e) => { if (isAdjustingVolume) applyVolumeFromX(e.clientX); };
+    const onPointerUp = (e) => {
+        if (!isAdjustingVolume) return;
+        isAdjustingVolume = false;
+        volumeSlider.classList.remove('dragging');
+        volumeSlider.releasePointerCapture(e.pointerId);
+    };
+
+    volumeSlider.addEventListener('pointerdown', onPointerDown);
+    volumeSlider.addEventListener('pointermove', onPointerMove);
+    volumeSlider.addEventListener('pointerup', onPointerUp);
+    volumeSlider.addEventListener('pointerleave', (e) => { if (isAdjustingVolume) onPointerUp(e); });
+
+    // Keyboard control
+    volumeSlider.addEventListener('keydown', (e) => {
+        let step = 0;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') step = -0.05;
+        else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') step = 0.05;
+        else if (e.key === 'Home') { audioPlayer.volume = 0; step = 0; }
+        else if (e.key === 'End') { audioPlayer.volume = 1; step = 0; }
+        if (step !== 0) {
+            e.preventDefault();
+            audioPlayer.volume = clamp(audioPlayer.volume + step, 0, 1);
+        }
+        const pct = audioPlayer.volume;
+        volumeFill.style.width = (pct * 100) + '%';
+        if (volumeHandle) volumeHandle.style.left = (pct * 100) + '%';
+        volumeSlider.setAttribute('aria-valuenow', Math.round(pct * 100));
+    });
 }
 
 // Play next track
@@ -336,6 +502,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    initSeekerDrag();
+    initVolumeDrag();
 });
 
 // Toggle 33⅓ RPM mode (simulate 33 rpm vs typical 45 rpm playback speed)
