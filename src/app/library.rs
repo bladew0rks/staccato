@@ -255,15 +255,14 @@ impl App {
     }
 
     pub fn extra_tab_count(&self) -> usize {
-        3
+        1
     }
 
     pub fn selected_tab(&self) -> usize {
-        match self.content_pane() {
-            ContentPane::Settings => self.playlists.len() + 2,
-            ContentPane::Soulseek => self.playlists.len() + 1,
-            ContentPane::Queue => self.playlists.len(),
-            ContentPane::Playlist => self.active_playlist,
+        if self.queue_open {
+            self.playlists.len()
+        } else {
+            self.active_playlist
         }
     }
 
@@ -275,14 +274,10 @@ impl App {
         let playlists = self.playlists.len();
         if index == playlists {
             self.open_queue_tab();
-        } else if index == playlists + 1 {
-            self.open_soulseek_tab()?;
-        } else if index == playlists + 2 {
-            self.open_settings_tab();
         } else if index < playlists {
+            let same_playlist = index == self.active_playlist;
             self.close_special_tabs();
             self.active_playlist = index;
-            self.playlist_selection = 0;
             if matches!(
                 self.focus,
                 Focus::SoulseekQuery
@@ -294,8 +289,11 @@ impl App {
             ) {
                 self.focus = Focus::Playlist;
             }
-            self.rebuild_shuffle();
-            self.save_state()?;
+            if !same_playlist {
+                self.playlist_selection = 0;
+                self.rebuild_shuffle();
+                self.save_state()?;
+            }
         }
         Ok(())
     }
@@ -349,7 +347,7 @@ impl App {
     pub(crate) fn begin_filter(&mut self) {
         if self.soulseek_open
             || self.settings_open
-            || matches!(self.overlay, Overlay::Help | Overlay::Menu { .. })
+            || matches!(self.overlay, Overlay::Help(_) | Overlay::Menu { .. })
         {
             return;
         }

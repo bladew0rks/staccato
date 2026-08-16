@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::model::{PlaylistColumn, PlaylistId};
-use crate::soulseek::{SoulseekFormat, SoulseekScope};
+use crate::soulseek::{SoulseekFilterField, SoulseekFormat, SoulseekScope};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -55,6 +55,7 @@ pub enum Action {
     SoulseekSetFormat(SoulseekFormat),
     SoulseekCycleFormat(i32),
     SoulseekToggleFreeSlot,
+    SoulseekCycleFilter(SoulseekFilterField),
     BeginFilter,
     ClearFilter,
     ToggleMark,

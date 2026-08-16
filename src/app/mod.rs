@@ -36,7 +36,7 @@ use crate::{
 pub use library::AlbumEntry;
 pub use menus::menu_actions;
 #[allow(unused_imports)]
-pub use overlay::{Overlay, PathPicker, PickerEntry, PickerMode};
+pub use overlay::{HelpRow, HelpView, Overlay, PathPicker, PickerEntry, PickerMode};
 
 use playback::StagedPlayback;
 
@@ -315,10 +315,10 @@ impl App {
                 self.overlay = Overlay::PathPicker(PathPicker::new(PickerMode::Folder))
             }
             Action::ToggleHelp => {
-                self.overlay = if matches!(self.overlay, Overlay::Help) {
+                self.overlay = if matches!(self.overlay, Overlay::Help(_)) {
                     Overlay::None
                 } else {
-                    Overlay::Help
+                    Overlay::Help(HelpView::default())
                 };
             }
             Action::OpenMenu(menu) => self.overlay = Overlay::Menu { menu, selected: 0 },
@@ -355,6 +355,7 @@ impl App {
             Action::SoulseekSetFormat(format) => self.apply_soulseek_format(format),
             Action::SoulseekCycleFormat(delta) => self.cycle_soulseek_format(delta),
             Action::SoulseekToggleFreeSlot => self.toggle_soulseek_free_slot(),
+            Action::SoulseekCycleFilter(field) => self.cycle_soulseek_filter(field),
             Action::BeginFilter => self.begin_filter(),
             Action::ClearFilter => self.clear_filter(),
             Action::ToggleMark => self.toggle_mark(),

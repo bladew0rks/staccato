@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -17,6 +18,141 @@ use super::{
     menus::menu_actions,
     util::{clamp_index, step_index, wrap_index},
 };
+
+#[derive(Clone, Debug)]
+pub struct HelpView {
+    pub selected: usize,
+    pub collapsed: BTreeSet<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum HelpRow {
+    Section {
+        id: usize,
+        title: &'static str,
+        open: bool,
+    },
+    Entry {
+        keys: &'static str,
+        text: &'static str,
+    },
+}
+
+const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Playback",
+        &[
+            ("Space", "Play / pause"),
+            ("Left / Right", "Seek ±5 seconds"),
+            ("+ / -", "Volume"),
+            ("Stop", "Toolbar stop"),
+            (
+                "Playback menu",
+                "Order, stop after current, ReplayGain scan",
+            ),
+        ],
+    ),
+    (
+        "Playlists",
+        &[
+            ("Enter", "Play selection or add album"),
+            ("Delete", "Remove / dequeue"),
+            ("Ctrl+N", "New playlist"),
+            ("F2", "Rename playlist"),
+            ("Ctrl+W", "Close playlist or pane"),
+            ("Alt+Up / Down", "Move tracks"),
+            ("Click headers", "Sort playlist"),
+        ],
+    ),
+    (
+        "Selection",
+        &[
+            ("Ctrl+F", "Filter list"),
+            ("Esc", "Clear filter or close pane"),
+            ("Shift+Up / Down", "Extend selection"),
+            ("Insert", "Toggle mark"),
+        ],
+    ),
+    (
+        "Files",
+        &[
+            ("Ctrl+O", "Add files"),
+            ("Ctrl+Shift+O", "Add folder"),
+            ("Drop / paste", "Add files from a file manager"),
+            ("Library menu", "Add from clipboard"),
+        ],
+    ),
+    (
+        "Views",
+        &[
+            ("Ctrl+,", "Preferences"),
+            ("Library > Soulseek", "Search and download"),
+            ("Queue tab", "Plays before the playlist"),
+        ],
+    ),
+    (
+        "Soulseek",
+        &[
+            ("Enter", "Expand folder / download file"),
+            ("Left / Right", "Cycle format"),
+            ("Enter on filters", "Toggle free slots"),
+            ("Click chips", "Bitrate, speed, length, sort"),
+        ],
+    ),
+    (
+        "General",
+        &[
+            ("F1", "This help"),
+            ("F10", "Menu"),
+            ("Shift+F10", "Context menu"),
+            ("Ctrl+Q", "Exit"),
+        ],
+    ),
+];
+
+impl Default for HelpView {
+    fn default() -> Self {
+        let collapsed = (1..HELP_SECTIONS.len()).collect();
+        Self {
+            selected: 0,
+            collapsed,
+        }
+    }
+}
+
+impl HelpView {
+    pub fn visible_rows(&self) -> Vec<HelpRow> {
+        let mut rows = Vec::new();
+        for (id, (title, entries)) in HELP_SECTIONS.iter().enumerate() {
+            let open = !self.collapsed.contains(&id);
+            rows.push(HelpRow::Section { id, title, open });
+            if open {
+                rows.extend(
+                    entries
+                        .iter()
+                        .map(|(keys, text)| HelpRow::Entry { keys, text }),
+                );
+            }
+        }
+        rows
+    }
+
+    pub fn toggle(&mut self) {
+        let Some(HelpRow::Section { id, .. }) = self.visible_rows().get(self.selected).copied()
+        else {
+            return;
+        };
+        if !self.collapsed.remove(&id) {
+            self.collapsed.insert(id);
+        }
+        let len = self.visible_rows().len();
+        self.selected = if len == 0 {
+            0
+        } else {
+            self.selected.min(len - 1)
+        };
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickerMode {
@@ -87,7 +223,7 @@ fn file_name_key(path: &Path) -> String {
 #[derive(Clone, Debug)]
 pub enum Overlay {
     None,
-    Help,
+    Help(HelpView),
     Menu {
         menu: usize,
         selected: usize,
@@ -161,6 +297,9 @@ impl App {
             Overlay::PathPicker(picker) => {
                 picker.selected = step_index(picker.selected, delta, picker.entries.len());
             }
+            Overlay::Help(help) => {
+                help.selected = step_index(help.selected, delta, help.visible_rows().len());
+            }
             _ => {}
         }
     }
@@ -190,6 +329,11 @@ impl App {
             }
             Overlay::Connect { .. } => self.try_handle(Action::SubmitConnect)?,
             Overlay::Pair { .. } => self.try_handle(Action::SubmitPair)?,
+            Overlay::Help(help) => {
+                let mut help = help;
+                help.toggle();
+                self.overlay = Overlay::Help(help);
+            }
             _ => self.overlay = Overlay::None,
         }
         Ok(())
@@ -304,6 +448,11 @@ impl App {
     }
 
     pub(crate) fn open_settings_tab(&mut self) {
+        if self.settings_open {
+            self.settings_open = false;
+            self.focus = Focus::Playlist;
+            return;
+        }
         self.show_pane(ContentPane::Settings);
     }
 }

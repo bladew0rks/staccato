@@ -8,7 +8,7 @@ use crate::{
     action::Action,
     app::{App, Overlay, PickerMode},
     model::Focus,
-    soulseek::SoulseekFormat,
+    soulseek::{SoulseekFilterField, SoulseekFormat},
     ui::UiRegions,
 };
 
@@ -31,7 +31,18 @@ impl InputMapper {
 
     fn key(&mut self, key: KeyEvent, app: &App) -> Action {
         match &app.overlay {
-            Overlay::Help | Overlay::Properties { .. } => {
+            Overlay::Help(_) => {
+                return match key.code {
+                    KeyCode::Esc | KeyCode::F(1) => Action::CloseOverlay,
+                    KeyCode::Up => Action::OverlayMove(-1),
+                    KeyCode::Down => Action::OverlayMove(1),
+                    KeyCode::PageUp => Action::OverlayMove(-10),
+                    KeyCode::PageDown => Action::OverlayMove(10),
+                    KeyCode::Enter | KeyCode::Right | KeyCode::Left => Action::OverlayActivate,
+                    _ => Action::None,
+                };
+            }
+            Overlay::Properties { .. } => {
                 return match key.code {
                     KeyCode::Esc | KeyCode::F(1) => Action::CloseOverlay,
                     _ => Action::None,
@@ -89,6 +100,7 @@ impl InputMapper {
         if app.captures_text() {
             return match key.code {
                 KeyCode::Char('q') if ctrl => Action::Quit,
+                KeyCode::Esc if app.soulseek_captures_text() => Action::ClosePlaylist,
                 KeyCode::Esc => Action::ClearFilter,
                 KeyCode::Enter => Action::ActivateSelection,
                 KeyCode::Backspace => Action::TextBackspace,
@@ -110,6 +122,7 @@ impl InputMapper {
             {
                 Action::ClearFilter
             }
+            KeyCode::Esc if app.settings_open || app.soulseek_open => Action::ClosePlaylist,
             KeyCode::Char('q') if ctrl => Action::Quit,
             KeyCode::Char('f') if ctrl => Action::BeginFilter,
             KeyCode::Char('o') if ctrl && shift => Action::OpenFolder,
@@ -154,6 +167,24 @@ impl InputMapper {
                 if app.settings_open && app.focus == Focus::Settings =>
             {
                 Action::SettingsAdjust(1)
+            }
+            KeyCode::Left if app.soulseek_open && app.focus == Focus::SoulseekFilter && shift => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Bitrate)
+            }
+            KeyCode::Right if app.soulseek_open && app.focus == Focus::SoulseekFilter && shift => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Bitrate)
+            }
+            KeyCode::Char('b') if app.soulseek_open && app.focus == Focus::SoulseekFilter => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Bitrate)
+            }
+            KeyCode::Char('p') if app.soulseek_open && app.focus == Focus::SoulseekFilter => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Speed)
+            }
+            KeyCode::Char('l') if app.soulseek_open && app.focus == Focus::SoulseekFilter => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Length)
+            }
+            KeyCode::Char('o') if app.soulseek_open && app.focus == Focus::SoulseekFilter => {
+                Action::SoulseekCycleFilter(SoulseekFilterField::Sort)
             }
             KeyCode::Left if app.soulseek_open && app.focus == Focus::SoulseekFilter => {
                 Action::SoulseekCycleFormat(-1)
@@ -221,6 +252,20 @@ impl InputMapper {
                 return Action::OpenMenu(index);
             }
             return Action::CloseOverlay;
+        } else if let Overlay::Help(help) = &app.overlay {
+            if let Some(area) = regions.overlay
+                && contains(area, point)
+            {
+                let row = mouse.row.saturating_sub(area.y + 1) as usize + regions.overlay_offset;
+                let selected = help.selected;
+                self.last_click = Some((mouse.column, mouse.row, Instant::now()));
+                return if row == selected {
+                    Action::OverlayActivate
+                } else {
+                    Action::OverlayMove(row as i32 - selected as i32)
+                };
+            }
+            return Action::None;
         } else if matches!(app.overlay, Overlay::PathPicker(_)) {
             if let Some(area) = regions.overlay
                 && contains(area, point)
@@ -318,6 +363,18 @@ impl InputMapper {
             if contains(regions.soulseek_slots, point) {
                 return Action::SoulseekToggleFreeSlot;
             }
+            if contains(regions.soulseek_bitrate, point) {
+                return Action::SoulseekCycleFilter(SoulseekFilterField::Bitrate);
+            }
+            if contains(regions.soulseek_speed, point) {
+                return Action::SoulseekCycleFilter(SoulseekFilterField::Speed);
+            }
+            if contains(regions.soulseek_length, point) {
+                return Action::SoulseekCycleFilter(SoulseekFilterField::Length);
+            }
+            if contains(regions.soulseek_sort, point) {
+                return Action::SoulseekCycleFilter(SoulseekFilterField::Sort);
+            }
             if contains(regions.soulseek_filter, point) {
                 return Action::SoulseekCycleFormat(0);
             }
@@ -411,7 +468,7 @@ pub(crate) fn paste_action(text: &str, app: &App) -> Action {
         Overlay::Rename { .. } | Overlay::Connect { .. } | Overlay::Pair { .. } => {
             Action::PasteText(text.to_owned())
         }
-        Overlay::Help
+        Overlay::Help(_)
         | Overlay::Menu { .. }
         | Overlay::ContextMenu { .. }
         | Overlay::Properties { .. }

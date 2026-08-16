@@ -156,6 +156,13 @@ impl App {
     }
 
     pub(crate) fn open_soulseek_tab(&mut self) -> Result<()> {
+        if self.soulseek_open {
+            self.soulseek_open = false;
+            if matches!(self.focus, Focus::SoulseekQuery | Focus::SoulseekFilter) {
+                self.focus = Focus::Playlist;
+            }
+            return Ok(());
+        }
         self.show_pane(ContentPane::Soulseek);
         if self.soulseek.is_some() {
             if self.soulseek_ui.phase != SoulseekPhase::Ready {
@@ -302,6 +309,14 @@ impl App {
         if self.soulseek_open {
             self.focus = Focus::SoulseekFilter;
             self.soulseek_ui.toggle_free_slot();
+            self.soulseek_refresh_filter_status();
+        }
+    }
+
+    pub(crate) fn cycle_soulseek_filter(&mut self, field: crate::soulseek::SoulseekFilterField) {
+        if self.soulseek_open {
+            self.focus = Focus::SoulseekFilter;
+            self.soulseek_ui.cycle_filter(field, 1);
             self.soulseek_refresh_filter_status();
         }
     }

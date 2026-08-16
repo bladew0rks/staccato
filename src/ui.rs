@@ -12,7 +12,7 @@ use throbber_widgets_tui::{ASCII, Throbber, WhichUse};
 use tui_equalizer::{Band, Equalizer};
 
 use crate::{
-    app::{App, Overlay, PickerMode, menu_actions},
+    app::{App, HelpRow, Overlay, PickerMode, menu_actions},
     cover,
     model::{Focus, PlaybackState, PlaylistColumn, format_duration},
     soulseek::{SoulseekFormat, SoulseekPhase, SoulseekRowKind},
@@ -63,6 +63,10 @@ pub struct UiRegions {
     pub soulseek_filter: Rect,
     pub soulseek_formats: Vec<Rect>,
     pub soulseek_slots: Rect,
+    pub soulseek_bitrate: Rect,
+    pub soulseek_speed: Rect,
+    pub soulseek_length: Rect,
+    pub soulseek_sort: Rect,
     pub album_filter: Rect,
     pub playlist_filter: Rect,
     pub playlist_headers: Vec<(PlaylistColumn, Rect)>,
@@ -474,7 +478,7 @@ fn render_tabs(frame: &mut Frame<'_>, area: Rect, app: &App, regions: &mut UiReg
         .playlists
         .iter()
         .map(|playlist| playlist.name.clone())
-        .chain([queue_label, "Soulseek".into(), "Preferences".into()])
+        .chain([queue_label])
         .collect();
     let titles = labels.iter().map(|label| Line::from(label.as_str()));
     let selected = app.selected_tab();
@@ -541,7 +545,7 @@ fn render_soulseek(
     } else {
         Layout::vertical([
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(3),
         ])
         .split(area)
@@ -625,7 +629,7 @@ fn render_soulseek_filters(frame: &mut Frame<'_>, area: Rect, app: &App, regions
     let focused = app.focus == Focus::SoulseekFilter;
     frame.render_widget(
         focused_block(
-            " Filters  ·  Left/Right format  ·  Enter free slots ",
+            " Filters  ·  Left/Right format  ·  Enter slots  ·  click chips ",
             focused,
         ),
         area,
@@ -676,6 +680,53 @@ fn render_soulseek_filters(frame: &mut Frame<'_>, area: Rect, app: &App, regions
             rect,
         );
         regions.soulseek_slots = rect;
+    }
+
+    if inner.height < 2 {
+        return;
+    }
+    let chips = [
+        (
+            format!(" {} ", app.soulseek_ui.filter.bitrate.label()),
+            app.soulseek_ui.filter.bitrate != crate::soulseek::SoulseekBitrate::Any,
+        ),
+        (
+            format!(" {} ", app.soulseek_ui.filter.min_speed.label()),
+            app.soulseek_ui.filter.min_speed != crate::soulseek::SoulseekMinSpeed::Any,
+        ),
+        (
+            format!(" {} ", app.soulseek_ui.filter.min_length.label()),
+            app.soulseek_ui.filter.min_length != crate::soulseek::SoulseekMinLength::Any,
+        ),
+        (
+            format!(" sort:{} ", app.soulseek_ui.filter.sort.label()),
+            app.soulseek_ui.filter.sort != crate::soulseek::SoulseekSort::Slots,
+        ),
+    ];
+    let mut x = inner.x;
+    let y = inner.y + 1;
+    let rects = [
+        &mut regions.soulseek_bitrate,
+        &mut regions.soulseek_speed,
+        &mut regions.soulseek_length,
+        &mut regions.soulseek_sort,
+    ];
+    for ((label, active), dest) in chips.into_iter().zip(rects) {
+        let width = (label.chars().count() as u16).min(inner.right().saturating_sub(x));
+        if width == 0 {
+            break;
+        }
+        let rect = Rect::new(x, y, width, 1);
+        frame.render_widget(
+            Paragraph::new(label).style(if active {
+                selected_style()
+            } else {
+                chrome_style()
+            }),
+            rect,
+        );
+        *dest = rect;
+        x = x.saturating_add(width + 1);
     }
 }
 
@@ -1073,19 +1124,46 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
 fn render_overlay(frame: &mut Frame<'_>, app: &App, regions: &mut UiRegions) {
     match &app.overlay {
         Overlay::None => {}
-        Overlay::Help => {
-            let area = centered(frame.area(), 68, 24);
+        Overlay::Help(help) => {
+            let area = centered(
+                frame.area(),
+                frame.area().width.saturating_sub(8).min(64),
+                frame.area().height.saturating_sub(6).min(22),
+            );
             regions.overlay = Some(area);
             frame.render_widget(Clear, area);
-            frame.render_widget(
-                Paragraph::new(
-                    "Keyboard shortcuts\n\n  Ctrl+O       Add files        Ctrl+Shift+O  Add folder\n  Space        Play / pause     Enter         Play / add album\n  Ctrl+F       Filter list      Esc           Clear filter\n  Shift+Up/Dn  Extend select    Insert        Toggle mark\n  Alt+Up/Down  Move tracks      Click headers Sort playlist\n  Left/Right   Seek ±5 sec      Delete        Remove / dequeue\n  Ctrl+N       New playlist     F2            Rename playlist\n  Ctrl+W       Close playlist   Ctrl+Q        Exit\n\nDrop files onto this window (kitty 0.47+, Windows Terminal paste).\nOr copy them and use Library → Add from clipboard / Ctrl+Shift+V.\nEnter on an artist or album adds every matching track.\nRight-click or Shift+F10: play, queue, remove, properties.\nThe Queue tab plays next, before playlist order. Playback\norder includes Shuffle (albums). The Preferences tab (Ctrl+,) holds ReplayGain, album art,\nspectrum, and icons.\nScan ReplayGain from the context menu or Playback menu.\n\nSoulseek: Enter expands a user or folder, or downloads a file.\nFilters: Left/Right format, Enter free slots.\n\nStaccato 0.1.0 — foobar2000-inspired terminal player",
-                )
-                .block(Block::bordered().title(" Help "))
-                .style(base_style())
-                .wrap(Wrap { trim: false }),
-                area,
+            let inner = area.inner(Margin {
+                horizontal: 1,
+                vertical: 1,
+            });
+            let split = Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).split(inner);
+            let rows = help.visible_rows();
+            let items = rows.iter().map(|row| match row {
+                HelpRow::Section { title, open, .. } => {
+                    let chevron = if *open { "▾" } else { "▸" };
+                    ListItem::new(format!("{chevron} {title}")).style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                }
+                HelpRow::Entry { keys, text } => {
+                    ListItem::new(format!("    {keys:<16} {text}")).style(base_style())
+                }
+            });
+            let mut state =
+                ListState::default().with_selected((!rows.is_empty()).then_some(help.selected));
+            frame.render_stateful_widget(
+                List::new(items).highlight_style(selected_style()),
+                split[0],
+                &mut state,
             );
+            regions.overlay_offset = state.offset();
+            frame.render_widget(
+                Paragraph::new("Enter: expand   Esc: close").style(chrome_style()),
+                split[1],
+            );
+            frame.render_widget(Block::bordered().title(" Help ").style(base_style()), area);
         }
         Overlay::Menu { menu, selected } => {
             let items = menu_actions(*menu);

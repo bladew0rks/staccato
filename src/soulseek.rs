@@ -13,8 +13,8 @@ use soulseek_rs::{Client, ClientSettings, DownloadStatus};
 
 use crate::library::is_supported;
 
-const SEARCH_WAIT: Duration = Duration::from_secs(8);
-const MAX_HITS: usize = 150;
+const SEARCH_WAIT: Duration = Duration::from_secs(15);
+const MAX_HITS: usize = 2_500;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SoulseekPhase {
@@ -84,25 +84,197 @@ impl SoulseekFormat {
     }
 
     pub fn cycle(self, delta: i32) -> Self {
-        let len = Self::ALL.len() as i32;
-        let at = Self::ALL.iter().position(|item| *item == self).unwrap_or(0) as i32;
-        Self::ALL[(at + delta).rem_euclid(len) as usize]
+        cycle_choice(&Self::ALL, self, delta)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoulseekBitrate {
+    #[default]
+    Any,
+    Kbps192,
+    Kbps256,
+    Kbps320,
+    Lossless,
+}
+
+impl SoulseekBitrate {
+    pub const ALL: [Self; 5] = [
+        Self::Any,
+        Self::Kbps192,
+        Self::Kbps256,
+        Self::Kbps320,
+        Self::Lossless,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "any kbps",
+            Self::Kbps192 => "192+",
+            Self::Kbps256 => "256+",
+            Self::Kbps320 => "320+",
+            Self::Lossless => "lossless",
+        }
+    }
+
+    pub fn matches(self, hit: &SoulseekHit) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Lossless => hit.is_lossless(),
+            Self::Kbps192 => hit.bitrate.unwrap_or(0) >= 192 || hit.is_lossless(),
+            Self::Kbps256 => hit.bitrate.unwrap_or(0) >= 256 || hit.is_lossless(),
+            Self::Kbps320 => hit.bitrate.unwrap_or(0) >= 320 || hit.is_lossless(),
+        }
+    }
+
+    pub fn cycle(self, delta: i32) -> Self {
+        cycle_choice(&Self::ALL, self, delta)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoulseekMinSpeed {
+    #[default]
+    Any,
+    Kbps100,
+    Kbps500,
+    Mbps1,
+}
+
+impl SoulseekMinSpeed {
+    pub const ALL: [Self; 4] = [Self::Any, Self::Kbps100, Self::Kbps500, Self::Mbps1];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "any speed",
+            Self::Kbps100 => "100K+",
+            Self::Kbps500 => "500K+",
+            Self::Mbps1 => "1M+",
+        }
+    }
+
+    fn min_bytes(self) -> u32 {
+        match self {
+            Self::Any => 0,
+            Self::Kbps100 => 100 * 1024,
+            Self::Kbps500 => 500 * 1024,
+            Self::Mbps1 => 1_048_576,
+        }
+    }
+
+    pub fn matches(self, hit: &SoulseekHit) -> bool {
+        self == Self::Any || hit.speed >= self.min_bytes()
+    }
+
+    pub fn cycle(self, delta: i32) -> Self {
+        cycle_choice(&Self::ALL, self, delta)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoulseekMinLength {
+    #[default]
+    Any,
+    Minute,
+    Minutes3,
+    Minutes5,
+}
+
+impl SoulseekMinLength {
+    pub const ALL: [Self; 4] = [Self::Any, Self::Minute, Self::Minutes3, Self::Minutes5];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "any length",
+            Self::Minute => "1m+",
+            Self::Minutes3 => "3m+",
+            Self::Minutes5 => "5m+",
+        }
+    }
+
+    fn min_secs(self) -> u32 {
+        match self {
+            Self::Any => 0,
+            Self::Minute => 60,
+            Self::Minutes3 => 180,
+            Self::Minutes5 => 300,
+        }
+    }
+
+    pub fn matches(self, hit: &SoulseekHit) -> bool {
+        self == Self::Any || hit.duration.unwrap_or(0) >= self.min_secs()
+    }
+
+    pub fn cycle(self, delta: i32) -> Self {
+        cycle_choice(&Self::ALL, self, delta)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoulseekSort {
+    #[default]
+    Slots,
+    Speed,
+    Bitrate,
+    Size,
+}
+
+impl SoulseekSort {
+    pub const ALL: [Self; 4] = [Self::Slots, Self::Speed, Self::Bitrate, Self::Size];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Slots => "slots",
+            Self::Speed => "speed",
+            Self::Bitrate => "bitrate",
+            Self::Size => "size",
+        }
+    }
+
+    pub fn cycle(self, delta: i32) -> Self {
+        cycle_choice(&Self::ALL, self, delta)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoulseekFilterField {
+    Bitrate,
+    Speed,
+    Length,
+    Sort,
+}
+
+fn cycle_choice<T: Copy + PartialEq>(all: &[T], current: T, delta: i32) -> T {
+    let len = all.len() as i32;
+    let at = all.iter().position(|item| *item == current).unwrap_or(0) as i32;
+    all[(at + delta).rem_euclid(len) as usize]
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SoulseekFilter {
     pub format: SoulseekFormat,
     pub free_slot: bool,
+    pub bitrate: SoulseekBitrate,
+    pub min_speed: SoulseekMinSpeed,
+    pub min_length: SoulseekMinLength,
+    pub sort: SoulseekSort,
 }
 
 impl SoulseekFilter {
     pub fn matches(&self, hit: &SoulseekHit) -> bool {
-        self.format.matches(hit) && (!self.free_slot || hit.slots > 0)
+        self.format.matches(hit)
+            && (!self.free_slot || hit.slots > 0)
+            && self.bitrate.matches(hit)
+            && self.min_speed.matches(hit)
+            && self.min_length.matches(hit)
     }
 
     pub fn is_active(&self) -> bool {
-        self.format != SoulseekFormat::All || self.free_slot
+        self.format != SoulseekFormat::All
+            || self.free_slot
+            || self.bitrate != SoulseekBitrate::Any
+            || self.min_speed != SoulseekMinSpeed::Any
+            || self.min_length != SoulseekMinLength::Any
     }
 }
 
@@ -162,11 +334,33 @@ impl SoulseekUi {
     }
 
     pub fn matching_hits(&self) -> Vec<SoulseekHit> {
-        self.hits
+        let mut hits: Vec<SoulseekHit> = self
+            .hits
             .iter()
             .filter(|hit| self.filter.matches(hit))
             .cloned()
-            .collect()
+            .collect();
+        hits.sort_by(|left, right| match self.filter.sort {
+            SoulseekSort::Slots => left
+                .slots
+                .cmp(&right.slots)
+                .reverse()
+                .then(right.speed.cmp(&left.speed)),
+            SoulseekSort::Speed => right
+                .speed
+                .cmp(&left.speed)
+                .then(right.slots.cmp(&left.slots)),
+            SoulseekSort::Bitrate => right
+                .bitrate
+                .unwrap_or(0)
+                .cmp(&left.bitrate.unwrap_or(0))
+                .then(right.slots.cmp(&left.slots)),
+            SoulseekSort::Size => right
+                .size
+                .cmp(&left.size)
+                .then(right.slots.cmp(&left.slots)),
+        });
+        hits
     }
 
     pub fn visible_rows(&self) -> Vec<SoulseekRow> {
@@ -192,6 +386,22 @@ impl SoulseekUi {
         if self.filter.free_slot {
             text.push_str("  ·  free slots");
         }
+        if self.filter.bitrate != SoulseekBitrate::Any {
+            text.push_str("  ·  ");
+            text.push_str(self.filter.bitrate.label());
+        }
+        if self.filter.min_speed != SoulseekMinSpeed::Any {
+            text.push_str("  ·  ");
+            text.push_str(self.filter.min_speed.label());
+        }
+        if self.filter.min_length != SoulseekMinLength::Any {
+            text.push_str("  ·  ");
+            text.push_str(self.filter.min_length.label());
+        }
+        if self.filter.sort != SoulseekSort::Slots {
+            text.push_str("  ·  sort ");
+            text.push_str(self.filter.sort.label());
+        }
         text
     }
 
@@ -206,6 +416,24 @@ impl SoulseekUi {
 
     pub fn toggle_free_slot(&mut self) {
         self.filter.free_slot = !self.filter.free_slot;
+        self.clamp_selected();
+    }
+
+    pub fn cycle_filter(&mut self, field: SoulseekFilterField, delta: i32) {
+        match field {
+            SoulseekFilterField::Bitrate => {
+                self.filter.bitrate = self.filter.bitrate.cycle(delta);
+            }
+            SoulseekFilterField::Speed => {
+                self.filter.min_speed = self.filter.min_speed.cycle(delta);
+            }
+            SoulseekFilterField::Length => {
+                self.filter.min_length = self.filter.min_length.cycle(delta);
+            }
+            SoulseekFilterField::Sort => {
+                self.filter.sort = self.filter.sort.cycle(delta);
+            }
+        }
         self.clamp_selected();
     }
 
@@ -377,6 +605,7 @@ pub struct SoulseekHit {
     pub slots: u8,
     pub speed: u32,
     pub bitrate: Option<u32>,
+    pub duration: Option<u32>,
 }
 
 impl SoulseekHit {
@@ -396,6 +625,13 @@ impl SoulseekHit {
             .extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase)
+    }
+
+    pub fn is_lossless(&self) -> bool {
+        matches!(
+            self.extension().as_deref(),
+            Some("flac" | "wav" | "wave" | "aif" | "aiff" | "alac")
+        )
     }
 }
 
@@ -483,10 +719,13 @@ fn session(
                 match client.search(&query, SEARCH_WAIT) {
                     Ok(results) => {
                         let hits = flatten_hits(results);
-                        let _ = events.send(SoulseekEvent::Status(format!(
-                            "{} matching files",
-                            hits.len()
-                        )));
+                        let count = hits.len();
+                        let status = if count == MAX_HITS {
+                            format!("{count} matching files (top {MAX_HITS})")
+                        } else {
+                            format!("{count} matching files")
+                        };
+                        let _ = events.send(SoulseekEvent::Status(status));
                         let _ = events.send(SoulseekEvent::SearchResults(hits));
                     }
                     Err(error) => {
@@ -591,6 +830,7 @@ pub fn flatten_hits(results: Vec<soulseek_rs::SearchResult>) -> Vec<SoulseekHit>
                 slots: result.slots,
                 speed: result.speed,
                 bitrate: file.attribs.get(&0).copied(),
+                duration: file.attribs.get(&1).copied(),
             });
         }
     }
@@ -807,6 +1047,7 @@ mod tests {
             slots: 1,
             speed: 2_000_000,
             bitrate: Some(320),
+            duration: Some(180),
         }];
         let mut ui = SoulseekUi::ready();
         ui.set_hits(hits);
@@ -832,6 +1073,7 @@ mod tests {
                 slots: 1,
                 speed: 1,
                 bitrate: None,
+                duration: None,
             },
             SoulseekHit {
                 username: "alice".into(),
@@ -840,6 +1082,7 @@ mod tests {
                 slots: 1,
                 speed: 1,
                 bitrate: None,
+                duration: None,
             },
             SoulseekHit {
                 username: "alice".into(),
@@ -848,6 +1091,7 @@ mod tests {
                 slots: 1,
                 speed: 1,
                 bitrate: None,
+                duration: None,
             },
         ];
         let mut ui = SoulseekUi::ready();
@@ -871,6 +1115,7 @@ mod tests {
                 slots: 1,
                 speed: 1,
                 bitrate: None,
+                duration: None,
             },
             SoulseekHit {
                 username: "bob".into(),
@@ -879,6 +1124,7 @@ mod tests {
                 slots: 1,
                 speed: 1,
                 bitrate: None,
+                duration: None,
             },
         ]);
         ui.selected = 0;
@@ -895,6 +1141,7 @@ mod tests {
             slots,
             speed: 1,
             bitrate: None,
+            duration: None,
         }
     }
 
@@ -925,6 +1172,42 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn quality_filters_drop_short_and_lossy_files() {
+        let mut ui = SoulseekUi::ready();
+        ui.set_hits(vec![
+            SoulseekHit {
+                username: "alice".into(),
+                name: r"album\a.flac".into(),
+                size: 30_000_000,
+                slots: 1,
+                speed: 2_000_000,
+                bitrate: None,
+                duration: Some(240),
+            },
+            SoulseekHit {
+                username: "alice".into(),
+                name: r"album\b.mp3".into(),
+                size: 4_000_000,
+                slots: 1,
+                speed: 80_000,
+                bitrate: Some(192),
+                duration: Some(30),
+            },
+        ]);
+        ui.cycle_filter(SoulseekFilterField::Bitrate, 1);
+        ui.cycle_filter(SoulseekFilterField::Bitrate, 1);
+        ui.cycle_filter(SoulseekFilterField::Bitrate, 1);
+        ui.cycle_filter(SoulseekFilterField::Bitrate, 1);
+        assert_eq!(ui.filter.bitrate, SoulseekBitrate::Lossless);
+        assert_eq!(ui.matching_hits().len(), 1);
+        ui.cycle_filter(SoulseekFilterField::Bitrate, 1);
+        ui.cycle_filter(SoulseekFilterField::Length, 1);
+        ui.cycle_filter(SoulseekFilterField::Speed, 2);
+        assert_eq!(ui.matching_hits().len(), 1);
+        assert!(ui.matching_hits()[0].name.ends_with("a.flac"));
     }
 
     #[test]
