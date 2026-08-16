@@ -1,92 +1,83 @@
-# Staccato Music Server
+# Staccato
 
-A self-hosted, moderately advanced music streaming server built with Go and vanilla JavaScript.
-
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Go Version](https://img.shields.io/badge/Go-1.19+-blue.svg)](https://golang.org)
-[![Release](https://img.shields.io/github/v/release/9lbw/staccato)](https://github.com/9lbw/staccato/releases)
+One terminal music player to rule them all.
 
 ## Features
 
-- Music streaming via web browser
-- Format support for FLAC, MP3, WAV, and M4A files
-- Responsive design for desktop, tablet, and mobile
-- Playlist management and search functionality
-- Download integration with yt-dlp
-- Ngrok integration for remote access
-- Automatic library scanning and file monitoring
-- Full audio controls with keyboard shortcuts
+* **Wide Format Support:** Plays MP3, FLAC, WAV, Ogg Vorbis, AAC, M4A, and ALAC files
+* **Playback Controls:** Native gapless playback, ReplayGain, and all the other stuff you'd expect from something like this
+* **UI & Visuals:** Multi-tab playlists, background folder scanning, embedded or folder album art, and a live spectrum display
+* **Network & Search:** Direct Soulseek integration for search and downloads, plus local network library sharing without transcoding
+* **Input Flexibility:** Complete keyboard navigation alongside full mouse support for controls, tabs, and columns
+
+## Requirements
+
+* **Rust:** Current stable toolchain
+* **Linux:** ALSA development header files:
+  `sudo apt install libasound2-dev pkg-config`
+* **Terminal:** Minimum dimensions of 70 columns by 20 rows
 
 ## Quick Start
 
-Download the latest release from the [releases page](https://github.com/9lbw/staccato/releases), extract it, and create a `music` folder with your audio files.
+```sh
+# Run from source
+cargo run --release
 
-```bash
-# Windows
-staccato.exe
+# Run and load immediate files or folders
+cargo run --release -- ~/Music album.flac
 
-# Linux/macOS
-./staccato
+# Build standalone binary (found in target/release/)
+cargo build --release
 ```
 
-Open your browser to `http://localhost:8080`
-
-## Configuration
-
-Staccato creates a `config.toml` file on first run:
-
-```toml
-[server]
-port = "8080"
-host = "0.0.0.0"
-
-[music]
-library_path = "./music"
-scan_on_startup = true
-watch_for_changes = true
-
-[ngrok]
-enabled = false
-auth_token = ""
-```
-
-## Music Downloads
-
-Install [yt-dlp](https://github.com/yt-dlp/yt-dlp) and paste URLs in the web interface. Downloaded music is automatically added to your library.
-
-```bash
-pip install yt-dlp
-```
-
-## Remote Access
-
-1. Create an account at [ngrok.com](https://ngrok.com)
-2. Add your auth token to `config.toml`
-3. Set `enabled = true` under `[ngrok]`
-4. Restart the server
-
-## Keyboard Shortcuts
+### Essential Keybindings
 
 | Key | Action |
-|-----|--------|
-| Space | Play/Pause |
-| → / N | Next track |
-| ← / P | Previous track |
+| --- | --- |
+| `Ctrl+O` / `Ctrl+Shift+O` | Add files / add folder |
+| `Space` | Play or pause |
+| `Enter` | Play selection or add album |
+| `Up` / `Down` | Navigate list |
+| `Left` / `Right` | Seek backward / forward 5 seconds |
+| `+` / `-` | Adjust volume |
+| `Ctrl+F` | Filter active list |
+| `Delete` | Remove selected item |
+| `F1` | Display all keyboard shortcuts |
 
-## Development
+## Soulseek Integration
 
-```bash
-git clone https://github.com/9lbw/staccato.git
-cd staccato
-go mod download
-go build -o bin/staccato ./cmd/staccato
-./bin/staccato
+Open **Library > Search Soulseek** in the app, or pass credentials via environment variables:
+
+```sh
+export STACCATO_SOULSEEK_USER="your-username"
+export STACCATO_SOULSEEK_PASSWORD="your-password"
+cargo run --release
+```
+
+Downloaded tracks save automatically to your primary library folder and trigger an instant background rescan
+
+## Local Network Sharing
+
+Share your library across your LAN without configuring complex router settings:
+
+```sh
+# Host a library (prints pairing code, defaults to UDP 1744)
+target/release/staccato serve ~/Music
+
+# Connect from a remote client
+target/release/staccato connect <HOST_IP>:1744 --code <PAIRING_CODE>
+```
+
+## Development & Verification
+
+Run these standard quality checks before submitting pull requests:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
 ## License
 
-GPLv3 License, see [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions welcome. Please submit pull requests or open issues for bugs and feature requests.
+Distributed under the MIT License

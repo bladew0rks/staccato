@@ -1,183 +1,39 @@
-name: Build and Release
+name: Build
 
 on:
   push:
-    tags: [ 'v*' ]
+  pull_request:
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
-  build:
-    name: Build for ${{ matrix.os }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          # Windows builds
-          - os: windows
-            arch: amd64
-            runner: windows-latest
-            binary_suffix: .exe
-            cgo_enabled: 1
-          - os: windows
-            arch: arm64
-            runner: windows-latest
-            binary_suffix: .exe
-            cgo_enabled: 0
-          
-          # Linux builds
-          - os: linux
-            arch: amd64
-            runner: ubuntu-latest
-            binary_suffix: ""
-            cgo_enabled: 1
-          - os: linux
-            arch: arm64
-            runner: ubuntu-latest
-            binary_suffix: ""
-            cgo_enabled: 0
-          - os: linux
-            arch: arm
-            runner: ubuntu-latest
-            binary_suffix: ""
-            cgo_enabled: 0
-          
-          # macOS builds
-          - os: darwin
-            arch: amd64
-            runner: macos-latest
-            binary_suffix: ""
-            cgo_enabled: 1
-          - os: darwin
-            arch: arm64
-            runner: macos-latest
-            binary_suffix: ""
-            cgo_enabled: 1
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.22.4'
-
-    - name: Install dependencies (Linux)
-      if: matrix.os == 'linux' && matrix.cgo_enabled == 1
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-multilib
-
-    - name: Install cross-compilation tools (Linux ARM)
-      if: matrix.os == 'linux' && matrix.arch == 'arm64' && matrix.cgo_enabled == 1
-      run: |
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-        echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Run tests
-      if: matrix.os == 'linux' && matrix.arch == 'amd64'
-      run: go test -v ./...
-
-    - name: Build binary
-      env:
-        GOOS: ${{ matrix.os }}
-        GOARCH: ${{ matrix.arch }}
-        CGO_ENABLED: ${{ matrix.cgo_enabled }}
-      run: |
-        go build -v -ldflags="-s -w" -o staccato-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.binary_suffix }} ./cmd/staccato
-
-    - name: Create release archive (Windows)
-      if: matrix.os == 'windows'
-      run: |
-        mkdir release
-        # Copy and rename binary to uniform name
-        cp staccato-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.binary_suffix }} release/staccato${{ matrix.binary_suffix }}
-        # Include static web assets
-        Copy-Item -Path static -Destination release\static -Recurse
-        if (Test-Path "config.example.toml") { cp config.example.toml release/config.toml }
-    
-    - name: Create release archive (Unix)
-      if: matrix.os != 'windows'
-      run: |
-        mkdir -p release
-        # Copy and rename binary to uniform name
-        cp staccato-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.binary_suffix }} release/staccato${{ matrix.binary_suffix }}
-        chmod +x release/staccato${{ matrix.binary_suffix }}
-        # Include static web assets
-        cp -r static release/static
-        # Other assets
-        if [ -f "config.example.toml" ]; then cp config.example.toml release/config.toml; fi
-
-    - name: Create ZIP archive (Windows)
-      if: matrix.os == 'windows'
-      run: |
-        Compress-Archive -Path release/* -DestinationPath staccato-${{ matrix.os }}-${{ matrix.arch }}.zip
-
-    - name: Create TAR archive (Unix)
-      if: matrix.os != 'windows'
-      run: |
-        tar -czf staccato-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C release .
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: staccato-${{ matrix.os }}-${{ matrix.arch }}
-        path: |
-          staccato-${{ matrix.os }}-${{ matrix.arch }}.zip
-          staccato-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-        retention-days: 30
-
-  release:
-    name: Create Release
-    needs: build
+  check:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-      packages: write
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
 
-    - name: Display structure of downloaded files
-      run: ls -la artifacts/
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-    - name: Flatten artifact structure
-      run: |
-        find artifacts -name "*.zip" -exec mv {} . \;
-        find artifacts -name "*.tar.gz" -exec mv {} . \;
-        ls -la *.zip *.tar.gz 2>/dev/null || echo "No archives found"
+      - name: Cache Rust files
+        uses: Swatinem/rust-cache@v2
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          *.zip
-          *.tar.gz
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Build release
+        run: cargo build --release

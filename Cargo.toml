@@ -1,0 +1,47 @@
+[package]
+name = "staccato"
+version = "0.1.0"
+edition = "2024"
+description = "A foobar2000-inspired terminal music player"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5"
+crossterm = "0.29"
+directories = "6.0"
+ebur128 = "0.1"
+hex = "0.4"
+hostname = "0.4"
+if-addrs = "0.13"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+lofty = "0.25"
+mdns-sd = "0.13"
+quinn = "0.11"
+rand = "0.8"
+ratatui = "0.30"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
+rcgen = "0.13"
+rodio = { version = "0.22", default-features = false, features = ["playback", "flac", "mp3", "mp4", "vorbis", "wav", "symphonia-alac"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+rustls-pki-types = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+soulseek-rs-lib = "14"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+throbber-widgets-tui = { version = "0.11.1", default-features = false }
+tui-equalizer = "0.2"
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3.20"
+
+[profile.release]
+lto = "thin"
+strip = true

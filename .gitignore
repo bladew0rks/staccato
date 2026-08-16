@@ -1,122 +1,22 @@
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+/target/
 
-# vscode
-.vscode/
-*.code-workspace
+# Local Staccato data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
 
-# Test binary, built with `go test -c`
-*.test
+# Local configuration and credentials
+.env
+.env.*
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-
-# no need for playlist covers to be uploaded to git
-static/covers
-
-# Build artifacts
-bin/
-dist/
-/staccato
-staccato-*
-
-# IDEs and editors
-.vscode/
+# Editors and operating systems
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
-
-# OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
-
-# User content and data
-music/*
-!music/.gitkeep
-users/
-users/*
-
-# Session and authentication files  
-cookies*.txt
-*.cookie
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-*.db-shm
-*.db-wal
-
-# Configuration files (keep example)
-config.toml
-!config.example.toml
-users.toml
-
-# Temporary files
-*.tmp
-*.temp
-server.log
-*.log
-
-# Environment files
-.env
-.env.local
-.env.*.local
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# node_modules (if you add any Node.js tools)
-node_modules/
-
-# Optional npm cache directory
-.npm
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# Archives
-*.zip
-*.tar.gz
-*.rar
-
-# Local development
-.air/
-
-# Docker
-.docker/
-
-# Backup files
-*.bak
