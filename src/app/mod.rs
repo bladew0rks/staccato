@@ -118,6 +118,7 @@ pub struct App {
     staged_playback: Option<StagedPlayback>,
     playback_generation: u64,
     audio_started_generation: Option<u64>,
+    requested_covers: BTreeSet<String>,
 }
 
 impl App {
@@ -222,6 +223,7 @@ impl App {
             staged_playback: None,
             playback_generation: 0,
             audio_started_generation: None,
+            requested_covers: BTreeSet::new(),
         };
         app.rebuild_shuffle();
         let roots = app.store.load_roots()?;
@@ -404,5 +406,39 @@ impl App {
         let cache_dir = self.cache_dir();
         let cover_track = self.cover_track().cloned();
         self.covers.sync(cover_track.as_ref(), &cache_dir);
+        self.request_remote_cover(cover_track.as_ref());
+    }
+
+    fn request_remote_cover(&mut self, track: Option<&crate::model::Track>) {
+        if !self.show_album_art || self.covers.has_image() {
+            return;
+        }
+        let Some(track) = track else {
+            return;
+        };
+        let crate::model::TrackOrigin::Remote {
+            fingerprint,
+            remote_id,
+            ..
+        } = &track.origin
+        else {
+            return;
+        };
+        let cache = crate::cover::album_cache_path(
+            &self.cache_dir(),
+            fingerprint,
+            &track.artist,
+            &track.album,
+        );
+        if cache.is_file() {
+            return;
+        }
+        let key = format!("{fingerprint}\0{}\0{}", track.artist, track.album);
+        if !self.requested_covers.insert(key) {
+            return;
+        }
+        if let Some(remote) = &self.remote {
+            remote.fetch_cover(remote_id.clone());
+        }
     }
 }

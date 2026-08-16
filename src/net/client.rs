@@ -46,6 +46,10 @@ pub enum RemoteEvent {
     MediaReady {
         remote_id: String,
     },
+    Cover {
+        remote_id: String,
+        data: Option<Vec<u8>>,
+    },
     Discovered(Vec<DiscoveredServer>),
     Error(String),
     Disconnected,
@@ -57,6 +61,9 @@ pub enum RemoteCommand {
         remote_id: String,
         file_size: u64,
         etag: String,
+    },
+    FetchCover {
+        remote_id: String,
     },
     Disconnect,
     Rescan,
@@ -78,6 +85,10 @@ impl RemoteHandle {
             file_size,
             etag,
         });
+    }
+
+    pub fn fetch_cover(&self, remote_id: String) {
+        let _ = self.commands.send(RemoteCommand::FetchCover { remote_id });
     }
 
     pub fn disconnect(&self) {
@@ -360,6 +371,24 @@ async fn session_loop(
                             }
                         });
                     }
+                    Ok(RemoteCommand::FetchCover { remote_id }) => {
+                        let connection = connection.clone();
+                        let events = events.clone();
+                        tokio::spawn(async move {
+                            match fetch_cover(connection, remote_id.clone()).await {
+                                Ok(data) => {
+                                    let _ = events.send(RemoteEvent::Cover { remote_id, data });
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%remote_id, error = %error, "cover fetch failed");
+                                    let _ = events.send(RemoteEvent::Cover {
+                                        remote_id,
+                                        data: None,
+                                    });
+                                }
+                            }
+                        });
+                    }
                     Ok(RemoteCommand::Rescan) => {
                         tracing::info!("requesting server rescan");
                         protocol::write_message(&mut send, &Message::Rescan).await?;
@@ -498,6 +527,27 @@ async fn fetch_media(
         }
         Message::Error { message, .. } => bail!(message),
         other => bail!("unexpected media reply: {other:?}"),
+    }
+}
+
+async fn fetch_cover(connection: quinn::Connection, remote_id: String) -> Result<Option<Vec<u8>>> {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    protocol::write_message(
+        &mut send,
+        &Message::GetCover {
+            remote_id: remote_id.clone(),
+        },
+    )
+    .await?;
+    match protocol::read_message(&mut recv).await? {
+        Message::Cover { data, .. } => {
+            Ok(data.and_then(|data| crate::cover::decode_cover_data(&data)))
+        }
+        Message::Error { message, .. } => {
+            tracing::debug!(%remote_id, %message, "server has no cover");
+            Ok(None)
+        }
+        other => bail!("unexpected cover reply: {other:?}"),
     }
 }
 

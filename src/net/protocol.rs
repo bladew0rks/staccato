@@ -59,6 +59,14 @@ pub enum Message {
         etag: String,
         codec: String,
     },
+    GetCover {
+        remote_id: String,
+    },
+    Cover {
+        remote_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+    },
     Ping,
     Pong,
     LibraryChanged {
@@ -192,5 +200,21 @@ mod tests {
     fn unsupported_version_is_rejected() {
         let json = br#"{"v":99,"type":"ping"}"#;
         assert!(decode_json(json).is_err());
+    }
+
+    #[test]
+    fn cover_messages_round_trip() {
+        let request = Message::GetCover {
+            remote_id: "abc".into(),
+        };
+        assert_eq!(
+            decode_frame(&encode_frame(&request).unwrap()).unwrap(),
+            request
+        );
+        let reply = Message::Cover {
+            remote_id: "abc".into(),
+            data: Some("ZmlsZQ==".into()),
+        };
+        assert_eq!(decode_frame(&encode_frame(&reply).unwrap()).unwrap(), reply);
     }
 }

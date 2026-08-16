@@ -246,6 +246,7 @@ async fn handle_stream(
             offset,
             length,
         } => handle_media(conn_id, remote_id, offset, length, send, state).await,
+        Message::GetCover { remote_id } => handle_cover(conn_id, remote_id, send, state).await,
         other => {
             protocol::write_message(
                 &mut send,
@@ -436,11 +437,67 @@ fn message_kind(message: &Message) -> &'static str {
         Message::Catalog { .. } => "catalog",
         Message::OpenMedia { .. } => "open_media",
         Message::MediaHeader { .. } => "media_header",
+        Message::GetCover { .. } => "get_cover",
+        Message::Cover { .. } => "cover",
         Message::Ping => "ping",
         Message::Pong => "pong",
         Message::LibraryChanged { .. } => "library_changed",
         Message::Error { .. } => "error",
     }
+}
+
+async fn handle_cover(
+    conn_id: usize,
+    remote_id: String,
+    mut send: quinn::SendStream,
+    state: Arc<ServerState>,
+) -> Result<()> {
+    tracing::info!(conn_id, %remote_id, "get_cover");
+    if !is_authorized(&state, conn_id) {
+        protocol::write_message(
+            &mut send,
+            &Message::Error {
+                code: "unpaired".into(),
+                message: "pair this client before streaming".into(),
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    let track = {
+        let store = state.store.lock().expect("store");
+        store
+            .load_tracks()?
+            .into_values()
+            .find(|track| remote_id_for(&track.path) == remote_id)
+    };
+    let Some(track) = track else {
+        protocol::write_message(
+            &mut send,
+            &Message::Cover {
+                remote_id,
+                data: None,
+            },
+        )
+        .await?;
+        return Ok(());
+    };
+    if !path_allowed(&track.path, &state.roots) {
+        protocol::write_message(
+            &mut send,
+            &Message::Error {
+                code: "forbidden".into(),
+                message: "track is outside the configured library".into(),
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    let data = crate::cover::extract_cover_bytes(&track.path)
+        .as_deref()
+        .map(crate::cover::encode_cover_data);
+    protocol::write_message(&mut send, &Message::Cover { remote_id, data }).await?;
+    Ok(())
 }
 
 async fn handle_media(

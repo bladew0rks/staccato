@@ -158,6 +158,27 @@ impl App {
                     .playlist_selection
                     .min(self.active_playlist().items.len().saturating_sub(1));
             }
+            RemoteEvent::Cover { remote_id, data } => {
+                if let Some(bytes) = data
+                    && let Some(track) = self.tracks.values().find(|track| match &track.origin {
+                        TrackOrigin::Remote { remote_id: id, .. } => id == &remote_id,
+                        TrackOrigin::Local => false,
+                    })
+                    && let TrackOrigin::Remote { fingerprint, .. } = &track.origin
+                {
+                    let path = crate::cover::album_cache_path(
+                        &self.cache_dir(),
+                        fingerprint,
+                        &track.artist,
+                        &track.album,
+                    );
+                    if let Err(error) = crate::cover::save_album_cover(&path, &bytes) {
+                        tracing::warn!(error = %error, "could not cache album art");
+                    } else {
+                        self.covers.invalidate();
+                    }
+                }
+            }
             RemoteEvent::MediaReady { remote_id } => {
                 if let Some(track_id) = self.pending_track {
                     let matches =
