@@ -20,24 +20,37 @@ pub fn parse_dropped_paths(text: &str) -> Vec<PathBuf> {
 }
 
 pub fn clipboard_paths() -> Result<Vec<PathBuf>, String> {
-    for args in [&["--type", "text/uri-list"][..], &[][..]] {
-        let output = Command::new("wl-paste").args(args).output();
-        let Ok(output) = output else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
+    for text in clipboard_texts() {
         let paths = parse_dropped_paths(&text);
         if !paths.is_empty() {
             return Ok(paths);
         }
     }
-    if Command::new("wl-paste").arg("--version").output().is_err() {
-        return Err("wl-paste is not installed (wl-clipboard)".into());
-    }
     Err("clipboard does not contain file paths".into())
+}
+
+fn clipboard_texts() -> Vec<String> {
+    let mut texts = Vec::new();
+    for args in [&["--type", "text/uri-list"][..], &[][..]] {
+        if let Some(text) = command_stdout("wl-paste", args) {
+            texts.push(text);
+        }
+    }
+    if let Some(text) = command_stdout(
+        "powershell",
+        &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+    ) {
+        texts.push(text);
+    }
+    texts
+}
+
+fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn parse_uri_list(text: &str) -> Vec<PathBuf> {
@@ -86,9 +99,7 @@ fn tokenize_dropped(input: &str) -> Vec<String> {
                         break;
                     }
                     if ch == '\\' {
-                        if let Some(escaped) = chars.next() {
-                            token.push(escaped);
-                        }
+                        push_backslash(&mut token, &mut chars, true);
                     } else {
                         token.push(ch);
                     }
@@ -105,9 +116,7 @@ fn tokenize_dropped(input: &str) -> Vec<String> {
                     }
                     chars.next();
                     if ch == '\\' {
-                        if let Some(escaped) = chars.next() {
-                            token.push(escaped);
-                        }
+                        push_backslash(&mut token, &mut chars, false);
                     } else {
                         token.push(ch);
                     }
@@ -121,6 +130,30 @@ fn tokenize_dropped(input: &str) -> Vec<String> {
     tokens
 }
 
+/// Unix drops escape spaces as `\ `; Windows Terminal pastes `C:\Users\...`.
+/// Only treat `\` as an escape when the next character is a quoting metacharacter.
+fn push_backslash(
+    token: &mut String,
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    in_double_quotes: bool,
+) {
+    match chars.peek().copied() {
+        Some('"') if in_double_quotes => {
+            chars.next();
+            if chars.peek().is_none_or(|next| next.is_whitespace()) {
+                token.push('\\');
+            } else {
+                token.push('"');
+            }
+        }
+        Some(next) if matches!(next, ' ' | '\'' | '\\') => {
+            chars.next();
+            token.push(next);
+        }
+        _ => token.push('\\'),
+    }
+}
+
 fn dropped_path(token: &str) -> Option<PathBuf> {
     let token = token.trim();
     if token.is_empty() {
@@ -129,9 +162,9 @@ fn dropped_path(token: &str) -> Option<PathBuf> {
     let path = if let Some(rest) = strip_file_uri(token) {
         PathBuf::from(percent_decode(&rest)?)
     } else if token == "~" {
-        PathBuf::from(std::env::var_os("HOME")?)
+        PathBuf::from(home_dir()?)
     } else if let Some(rest) = token.strip_prefix("~/") {
-        PathBuf::from(std::env::var_os("HOME")?).join(rest)
+        PathBuf::from(home_dir()?).join(rest)
     } else {
         PathBuf::from(token)
     };
@@ -145,7 +178,16 @@ fn strip_file_uri(token: &str) -> Option<String> {
     let rest = rest.strip_prefix("//").unwrap_or(rest);
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
     let rest = rest.split(['?', '#']).next().unwrap_or(rest);
-    Some(rest.to_owned())
+    Some(windows_file_uri(rest).to_owned())
+}
+
+fn windows_file_uri(rest: &str) -> &str {
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+        &rest[1..]
+    } else {
+        rest
+    }
 }
 
 fn looks_like_dropped_path(original: &str, path: &Path) -> bool {
@@ -155,6 +197,81 @@ fn looks_like_dropped_path(original: &str, path: &Path) -> bool {
         || original.starts_with('~')
         || original.starts_with("./")
         || original.starts_with("../")
+        || is_windows_path(original)
+}
+
+fn is_windows_path(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || token.starts_with("\\\\")
+}
+
+fn home_dir() -> Option<std::ffi::OsString> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+}
+
+fn looks_like_drop_burst(text: &str) -> bool {
+    let text = text.trim();
+    if text.len() < 4 {
+        return false;
+    }
+    let stripped = text.trim_matches(|c| c == '"' || c == '\'');
+    stripped.starts_with('/')
+        || stripped.starts_with("file:")
+        || stripped.starts_with("FILE:")
+        || stripped.starts_with("\\\\")
+        || is_windows_path(stripped)
+}
+
+/// Windows Terminal (and some others) inject dropped paths as typed keys
+/// instead of a bracketed paste. Rebuild those bursts into a paste event.
+pub fn coalesce_drop_events(events: Vec<Event>) -> Vec<Event> {
+    let mut out = Vec::with_capacity(events.len());
+    let mut batch = Vec::new();
+    let mut text = String::new();
+    for event in events {
+        if let Some(character) = typed_drop_char(&event) {
+            batch.push(event);
+            text.push(character);
+            continue;
+        }
+        flush_drop_burst(&mut out, &mut batch, &mut text);
+        out.push(event);
+    }
+    flush_drop_burst(&mut out, &mut batch, &mut text);
+    out
+}
+
+fn typed_drop_char(event: &Event) -> Option<char> {
+    let Event::Key(key) = event else {
+        return None;
+    };
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return None;
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    key_char(key)
+}
+
+fn flush_drop_burst(out: &mut Vec<Event>, batch: &mut Vec<Event>, text: &mut String) {
+    if text.is_empty() {
+        return;
+    }
+    if looks_like_drop_burst(text) && !parse_dropped_paths(text).is_empty() {
+        out.push(Event::Paste(std::mem::take(text)));
+        batch.clear();
+        return;
+    }
+    out.append(batch);
+    text.clear();
 }
 
 fn percent_decode(input: &str) -> Option<String> {
@@ -500,6 +617,37 @@ mod tests {
                 PathBuf::from("/music/Album One/a.flac"),
                 PathBuf::from("/music/b c.mp3")
             ]
+        );
+    }
+
+    #[test]
+    fn parses_windows_terminal_quoted_paths() {
+        assert_eq!(
+            parse_dropped_paths(r#""C:\Users\Music\Album One\song.flac" "D:\b.mp3""#),
+            vec![
+                PathBuf::from(r"C:\Users\Music\Album One\song.flac"),
+                PathBuf::from(r"D:\b.mp3")
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_windows_file_uri() {
+        assert_eq!(
+            parse_dropped_paths("file:///C:/Users/Music/song.flac"),
+            vec![PathBuf::from("C:/Users/Music/song.flac")]
+        );
+    }
+
+    #[test]
+    fn coalesces_typed_windows_path_burst() {
+        let mut events = Vec::new();
+        for character in r#""C:\Users\Music\song.flac""#.chars() {
+            events.push(press(character, KeyModifiers::empty()));
+        }
+        assert_eq!(
+            coalesce_drop_events(events),
+            vec![Event::Paste(r#""C:\Users\Music\song.flac""#.into())]
         );
     }
 

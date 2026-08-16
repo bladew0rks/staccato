@@ -211,7 +211,7 @@ fn main() -> Result<()> {
                 events.push(event::read()?);
             }
         }
-        for event in kitty_dnd.ingest(events) {
+        for event in crate::drop::coalesce_drop_events(kitty_dnd.ingest(events)) {
             let action = input.map(event, &app, &regions);
             app.handle(action);
         }
