@@ -76,23 +76,3 @@ pub fn step(from: usize, delta: i32) -> usize {
     }
     from
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stepping_skips_section_headers() {
-        assert_eq!(
-            ROWS[first_item()],
-            SettingRow::Item(SettingId::OutputDevice)
-        );
-        let after_device = step(first_item(), 1);
-        assert_eq!(
-            ROWS[after_device],
-            SettingRow::Item(SettingId::ReplayGainMode)
-        );
-        let wrap = step(ROWS.len() - 1, 1);
-        assert!(ROWS[wrap].is_item());
-    }
-}

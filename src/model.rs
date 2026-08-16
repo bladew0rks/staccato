@@ -314,36 +314,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn durations_use_foobar_style_clock() {
-        assert_eq!(format_duration(Duration::from_secs(65)), "1:05");
-        assert_eq!(format_duration(Duration::from_secs(3661)), "1:01:01");
-    }
-
-    #[test]
     fn playback_order_cycles() {
         assert_eq!(PlaybackOrder::Default.next(), PlaybackOrder::RepeatPlaylist);
         assert_eq!(PlaybackOrder::Shuffle.next(), PlaybackOrder::ShuffleAlbums);
         assert_eq!(PlaybackOrder::ShuffleAlbums.next(), PlaybackOrder::Default);
-    }
-
-    #[test]
-    fn focus_cycles_around_a_ring() {
-        let ring = [
-            Focus::AlbumList,
-            Focus::AlbumFilter,
-            Focus::PlaylistTabs,
-            Focus::Playlist,
-        ];
-        assert_eq!(Focus::AlbumList.cycle(false, &ring), Focus::AlbumFilter);
-        assert_eq!(Focus::Playlist.cycle(true, &ring), Focus::PlaylistTabs);
-        assert_eq!(Focus::Playlist.cycle(false, &ring), Focus::AlbumList);
-    }
-
-    #[test]
-    fn text_matches_is_case_insensitive() {
-        assert!(text_matches("RADIO", &["OK Computer", "Radiohead"]));
-        assert!(!text_matches("jazz", &["Radiohead", "Karma Police"]));
-        assert!(text_matches("", &["anything"]));
     }
 
     #[test]

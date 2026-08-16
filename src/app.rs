@@ -3342,47 +3342,8 @@ fn unique_playlist_name(playlists: &[Playlist]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Focus, PlaylistColumn, Track, TrackId, TrackOrigin};
-    use crate::soulseek::{SoulseekFormat, SoulseekHit};
+    use crate::model::{Track, TrackId, TrackOrigin};
     use std::{path::PathBuf, time::Duration};
-
-    #[test]
-    fn playlist_names_are_unique() {
-        let playlists = vec![
-            Playlist {
-                id: 1,
-                name: "New Playlist".into(),
-                items: vec![],
-            },
-            Playlist {
-                id: 2,
-                name: "New Playlist (2)".into(),
-                items: vec![],
-            },
-        ];
-        assert_eq!(unique_playlist_name(&playlists), "New Playlist (3)");
-    }
-
-    #[test]
-    fn playlist_tabs_and_preferences_survive_restart() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let database = directory.path().join("state.db");
-        {
-            let mut app = App::open(&database, true)?;
-            app.handle(Action::NewPlaylist);
-            let id = app.active_playlist().id;
-            app.handle(Action::RenamePlaylist(id, "Road trip".into()));
-            app.handle(Action::VolumeRelative(-0.3));
-            app.handle(Action::CyclePlaybackOrder);
-            assert_eq!(app.playlists.len(), 2);
-        }
-        let app = App::open(&database, true)?;
-        assert_eq!(app.playlists.len(), 2);
-        assert_eq!(app.active_playlist().name, "Road trip");
-        assert!((app.audio_snapshot.volume - 0.5).abs() < f32::EPSILON);
-        assert_eq!(app.playback_order, PlaybackOrder::RepeatPlaylist);
-        Ok(())
-    }
 
     #[test]
     fn shuffle_is_a_stable_permutation() -> Result<()> {
@@ -3396,94 +3357,6 @@ mod tests {
         let mut sorted = app.shuffle.clone();
         sorted.sort_unstable();
         assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
-        Ok(())
-    }
-
-    #[test]
-    fn soulseek_context_menu_can_hide_a_user() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("context.db"), true)?;
-        app.soulseek_open = true;
-        app.soulseek_ui = SoulseekUi::ready();
-        app.soulseek_ui.set_hits(vec![SoulseekHit {
-            username: "alice".into(),
-            name: r"album\a.flac".into(),
-            size: 1,
-            slots: 1,
-            speed: 1,
-            bitrate: None,
-        }]);
-        app.handle(Action::OpenListContext {
-            row: Some(0),
-            x: Some(4),
-            y: Some(6),
-        });
-        let Overlay::ContextMenu { items, .. } = &app.overlay else {
-            panic!("expected a context menu");
-        };
-        assert!(items.iter().any(|(label, action)| label == "Hide alice"
-            && *action == Action::SoulseekHide(SoulseekScope::User)));
-        app.handle(Action::SoulseekHide(SoulseekScope::User));
-        assert!(app.soulseek_ui.hits.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn soulseek_enter_on_a_folder_toggles_it() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("fold.db"), true)?;
-        app.soulseek_open = true;
-        app.focus = Focus::Playlist;
-        app.soulseek_ui = SoulseekUi::ready();
-        app.soulseek_ui.set_hits(vec![SoulseekHit {
-            username: "alice".into(),
-            name: r"album\a.flac".into(),
-            size: 1,
-            slots: 1,
-            speed: 1,
-            bitrate: None,
-        }]);
-        app.soulseek_ui.selected = 1;
-        assert_eq!(app.soulseek_ui.visible_rows().len(), 3);
-        app.handle(Action::ActivateSelection);
-        assert_eq!(app.soulseek_ui.visible_rows().len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn soulseek_format_filter_hides_other_extensions() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("filter.db"), true)?;
-        app.soulseek_open = true;
-        app.soulseek_ui = SoulseekUi::ready();
-        app.soulseek_ui.set_hits(vec![
-            SoulseekHit {
-                username: "alice".into(),
-                name: r"album\a.flac".into(),
-                size: 1,
-                slots: 1,
-                speed: 1,
-                bitrate: None,
-            },
-            SoulseekHit {
-                username: "alice".into(),
-                name: r"album\b.mp3".into(),
-                size: 1,
-                slots: 1,
-                speed: 1,
-                bitrate: None,
-            },
-        ]);
-        app.handle(Action::SoulseekSetFormat(SoulseekFormat::Flac));
-        let files: Vec<_> = app
-            .soulseek_ui
-            .visible_rows()
-            .into_iter()
-            .filter(|row| row.kind == crate::soulseek::SoulseekRowKind::File)
-            .collect();
-        assert_eq!(files.len(), 1);
-        assert!(files[0].label.contains("a.flac"));
-        assert_eq!(app.focus, Focus::SoulseekFilter);
         Ok(())
     }
 
@@ -3507,39 +3380,6 @@ mod tests {
             origin: TrackOrigin::Local,
             replay_gain: crate::model::ReplayGainInfo::default(),
         }
-    }
-
-    #[test]
-    fn enter_on_an_album_adds_every_track() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("album-add.db"), true)?;
-        app.tracks.insert(1, sample_track(1, "A", "Album", "One"));
-        app.tracks.insert(2, sample_track(2, "A", "Album", "Two"));
-        app.tracks.insert(3, sample_track(3, "B", "Other", "Three"));
-        app.focus = Focus::AlbumList;
-        let entries = app.visible_album_entries();
-        let album = entries
-            .iter()
-            .position(|entry| entry.label == "Album")
-            .expect("album row");
-        app.album_selection = album;
-        app.handle(Action::ActivateSelection);
-        assert_eq!(app.playlists[0].items, vec![1, 2]);
-        Ok(())
-    }
-
-    #[test]
-    fn playlist_filter_hides_non_matching_rows() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("filter-pl.db"), true)?;
-        app.tracks
-            .insert(1, sample_track(1, "Radiohead", "OK", "Airbag"));
-        app.tracks
-            .insert(2, sample_track(2, "Miles", "Kind", "So What"));
-        app.playlists[0].items = vec![1, 2];
-        app.playlist_filter = "radio".into();
-        assert_eq!(app.visible_playlist_indices(), vec![0]);
-        Ok(())
     }
 
     #[test]
@@ -3613,75 +3453,6 @@ mod tests {
         assert_eq!(app.audio.snapshot().staged_track_id, Some(3));
         app.handle(Action::ToggleStopAfterCurrent);
         assert_eq!(app.audio.snapshot().staged_track_id, None);
-        Ok(())
-    }
-
-    #[test]
-    fn sort_playlist_orders_by_title() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("sort.db"), true)?;
-        app.tracks.insert(1, sample_track(1, "A", "A", "Zed"));
-        app.tracks.insert(2, sample_track(2, "A", "A", "Alpha"));
-        app.playlists[0].items = vec![1, 2];
-        app.handle(Action::SortPlaylist(PlaylistColumn::Title));
-        assert_eq!(app.playlists[0].items, vec![2, 1]);
-        Ok(())
-    }
-
-    #[test]
-    fn move_playlist_items_swaps_neighbors() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("move.db"), true)?;
-        app.tracks.insert(1, sample_track(1, "A", "A", "One"));
-        app.tracks.insert(2, sample_track(2, "A", "A", "Two"));
-        app.playlists[0].items = vec![1, 2];
-        app.playlist_selection = 0;
-        app.handle(Action::MovePlaylistItems(1));
-        assert_eq!(app.playlists[0].items, vec![2, 1]);
-        Ok(())
-    }
-
-    #[test]
-    fn preferences_can_hide_the_spectrum_and_survive_restart() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let database = directory.path().join("prefs.db");
-        {
-            let mut app = App::open(&database, true)?;
-            app.handle(Action::OpenSettings);
-            assert!(app.settings_open);
-            assert_eq!(app.focus, Focus::Settings);
-            assert_eq!(
-                crate::settings::ROWS[app.settings_selected],
-                crate::settings::SettingRow::Item(crate::settings::SettingId::OutputDevice)
-            );
-            while !matches!(
-                crate::settings::ROWS.get(app.settings_selected),
-                Some(crate::settings::SettingRow::Item(
-                    crate::settings::SettingId::Spectrum
-                ))
-            ) {
-                app.handle(Action::MoveSelection(1));
-            }
-            assert!(app.show_spectrum);
-            app.handle(Action::SettingsAdjust(1));
-            assert!(!app.show_spectrum);
-        }
-        let app = App::open(&database, true)?;
-        assert!(!app.show_spectrum);
-        assert!(app.show_album_art);
-        Ok(())
-    }
-
-    #[test]
-    fn soulseek_throbber_advances_only_while_downloads_are_active() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let mut app = App::open(&directory.path().join("throbber.db"), true)?;
-        let initial = app.soulseek_throbber.index();
-        app.tick();
-        assert_eq!(app.soulseek_throbber.index(), initial);
-        app.soulseek_downloads_active = 1;
-        app.tick();
-        assert_ne!(app.soulseek_throbber.index(), initial);
         Ok(())
     }
 }

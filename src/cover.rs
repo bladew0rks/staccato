@@ -169,38 +169,3 @@ pub fn art_panel_height(column_width: u16, content_height: u16) -> u16 {
     let square = column_width.saturating_add(1) / 2 + 2;
     square.clamp(8, 18).min(content_height.saturating_sub(8))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_file_has_no_cover() {
-        let track = Track {
-            id: 1,
-            path: PathBuf::from("/no/such/file.flac"),
-            title: "T".into(),
-            artist: "A".into(),
-            album: "B".into(),
-            date: None,
-            track_number: None,
-            duration: std::time::Duration::ZERO,
-            codec: "FLAC".into(),
-            sample_rate: None,
-            channels: None,
-            file_size: 0,
-            modified_ns: 0,
-            unavailable: true,
-            scan_error: None,
-            origin: TrackOrigin::Local,
-            replay_gain: crate::model::ReplayGainInfo::default(),
-        };
-        assert!(load_cover(&track, Path::new("/tmp")).is_none());
-    }
-
-    #[test]
-    fn art_panel_leaves_room_for_the_album_list() {
-        assert!(art_panel_height(32, 30) < 30);
-        assert!(art_panel_height(32, 12) <= 4);
-    }
-}

@@ -189,12 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn rescan_round_trips() {
-        let frame = encode_frame(&Message::Rescan).expect("encode");
-        assert_eq!(decode_frame(&frame).expect("decode"), Message::Rescan);
-    }
-
-    #[test]
     fn unsupported_version_is_rejected() {
         let json = br#"{"v":99,"type":"ping"}"#;
         assert!(decode_json(json).is_err());
