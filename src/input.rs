@@ -24,6 +24,7 @@ impl InputMapper {
                 self.key(key, app)
             }
             Event::Mouse(mouse) => self.mouse(mouse, app, regions),
+            Event::Paste(text) => paste_action(&text, app),
             _ => Action::None,
         }
     }
@@ -403,4 +404,28 @@ impl InputMapper {
 
 fn contains(rect: ratatui::layout::Rect, point: (u16, u16)) -> bool {
     point.0 >= rect.x && point.0 < rect.right() && point.1 >= rect.y && point.1 < rect.bottom()
+}
+
+pub(crate) fn paste_action(text: &str, app: &App) -> Action {
+    match &app.overlay {
+        Overlay::Rename { .. } | Overlay::Connect { .. } | Overlay::Pair { .. } => {
+            Action::PasteText(text.to_owned())
+        }
+        Overlay::Help
+        | Overlay::Menu { .. }
+        | Overlay::ContextMenu { .. }
+        | Overlay::Properties { .. }
+        | Overlay::PathPicker(_)
+        | Overlay::None => {
+            let paths = crate::drop::parse_dropped_paths(text);
+            if !paths.is_empty() {
+                tracing::info!(count = paths.len(), "paste contained file paths");
+                Action::AddPaths(paths)
+            } else if app.captures_text() {
+                Action::PasteText(text.to_owned())
+            } else {
+                Action::None
+            }
+        }
+    }
 }

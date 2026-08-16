@@ -2,6 +2,7 @@ mod action;
 mod app;
 mod audio;
 mod cover;
+mod drop;
 mod input;
 mod library;
 mod model;
@@ -24,7 +25,9 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -190,6 +193,8 @@ fn main() -> Result<()> {
     tracing::info!(protocol = app.covers.protocol_label(), "album art renderer");
     let mut input = InputMapper::default();
     let mut regions = ui::UiRegions::default();
+    let mut kitty_dnd = crate::drop::KittyDnd::new();
+    kitty_dnd.enable();
 
     while !app.should_quit {
         app.tick();
@@ -199,8 +204,15 @@ fn main() -> Result<()> {
             ui::IconSet::default()
         };
         terminal.draw(|frame| regions = ui::draw(frame, &mut app, icons))?;
+        let mut events = Vec::new();
         if event::poll(Duration::from_millis(50))? {
-            let action = input.map(event::read()?, &app, &regions);
+            events.push(event::read()?);
+            while event::poll(Duration::ZERO)? {
+                events.push(event::read()?);
+            }
+        }
+        for event in kitty_dnd.ingest(events) {
+            let action = input.map(event, &app, &regions);
             app.handle(action);
         }
     }
@@ -236,7 +248,12 @@ fn parse_endpoint(endpoint: &str) -> Result<SocketAddr> {
 fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode().context("enabling terminal raw mode")?;
     let mut stdout = io::stdout();
-    if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+    if let Err(error) = execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    ) {
         let _ = disable_raw_mode();
         return Err(error).context("entering the alternate screen");
     }
@@ -248,6 +265,11 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(
+            io::stdout(),
+            DisableBracketedPaste,
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
     }
 }
